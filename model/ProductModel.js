@@ -29,7 +29,10 @@ const ProductSchema = new mongoose.Schema({
   type: String,
   required: true  // 商品信息
  },
-
+ shopType: {
+  type: Array,
+  required: true  // 商品类型
+ },
  /**
   * 状态：0待审核，1上架，2下架，3违规
   */

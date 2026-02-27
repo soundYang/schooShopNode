@@ -6,7 +6,7 @@ module.exports = (success, error) => {
   }
 
   const mongoose = require('mongoose')
-  const {DBHOST,DBPORT,DBNAME} = require('../config.js/index')
+  const {DBHOST,DBPORT,DBNAME} = require('../config/index')
 
   mongoose.connect(`mongodb://${DBHOST}:${DBPORT}/${DBNAME}`)
 

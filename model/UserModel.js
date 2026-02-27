@@ -6,7 +6,7 @@ const UserSchema = new mongoose.Schema({
     required: true // 用户名
   },
   PhoneNumber: {
-    type: String,
+    type: Number,
     required: true // 手机号
   },
   PassWord: {
@@ -19,13 +19,18 @@ const UserSchema = new mongoose.Schema({
   },
 
   // 非必填
+  Addresses: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Address'   // 地址
+  }],
+  defaultAddress: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Address',   // 默认地址
+    default: null   // 添加默认值
+  },
   CreatedTime: {
     type: Date,
     default: Date.now // 创建时间
-  },
-  Address:{
-    type: Array,
-    default: []  // 地址
   },
   Avatar: {
     type: String,
@@ -39,14 +44,14 @@ const UserSchema = new mongoose.Schema({
     type: Number,
     default: 0   // 总售出
   },
-  ProductsPosted: {
-    type: Array,
-    default: []   // 售出商品
-  },
-  ProductsBought: {
+  ProductsPosted: [{
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'product'// 购入商品
-  },
+    ref: 'Product'  // 售出商品
+  }],
+  ProductsBought: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Product'// 购入商品
+  }],
 })
 
 const UserModel = mongoose.model('user', UserSchema)
