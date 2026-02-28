@@ -3,10 +3,12 @@ const mongoose = require('mongoose')
 const UserSchema = new mongoose.Schema({
   UserName: {
     type: String,
-    required: true // 用户名
+    required: true, 
+    unique: true   // 用户名
   },
   PhoneNumber: {
     type: Number,
+    unique: true,
     required: true // 手机号
   },
   PassWord: {
@@ -52,6 +54,10 @@ const UserSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Oreder'// 购入商品
   }],
+  tokenVersion: { 
+    type: Number, 
+    default: 0 
+  }   // 用于单点登录
 })
 
 const UserModel = mongoose.model('user', UserSchema)
