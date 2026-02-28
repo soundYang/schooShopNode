@@ -36,10 +36,10 @@ const UserSchema = new mongoose.Schema({
     type: String,
     default: ''   // 头像
   }, 
-  SellerReview: {
-    type: Array,
-    default: []   // 卖家评价
-  },
+  SellerReview: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Review'   // 卖家评价
+  }],
   TotalSold: {
     type: Number,
     default: 0   // 总售出
@@ -50,7 +50,7 @@ const UserSchema = new mongoose.Schema({
   }],
   ProductsBought: [{
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Product'// 购入商品
+    ref: 'Oreder'// 购入商品
   }],
 })
 

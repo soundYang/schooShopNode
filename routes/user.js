@@ -20,7 +20,7 @@ router.post('/userInfo', async (req,res) => {
       PhoneNumber: req.body.PhoneNumber
     })
     const name = await UserModel.findOne({
-      name: req.body.name
+      UserName: req.body.UserName
     })
     if( phone ) {
       return res.json({

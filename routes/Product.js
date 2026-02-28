@@ -9,15 +9,15 @@ const checkTokenMiddleware = require('../middlewares/checkTokenMiddelware.js')
 router.post('/create', checkTokenMiddleware, async (req,res) => {
   try {
     const currentUserId = req.user._id
-    const productData = {
-      ...req.body,
-      userId: currentUserId
-    }
 
     /**
      * 商品信息校验
      */
-
+    const productData = {
+      ...req.body,
+      userId: currentUserId,
+      shopStatus: 1
+    }
     const data = await ProductModel.create(productData)
 
     await UserModel.findByIdAndUpdate(
@@ -69,7 +69,8 @@ router.get('/getAllPro', async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1          // 当前页码，默认为1
     const pageSize = parseInt(req.query.pageSize) || 10 // 每页条数，默认为10
-
+    const shopStatus = req.query.shopStatus  // 商品状态
+    
     if (page < 1 || pageSize < 1) {
       return res.status(400).json({ code: 400, msg: '页码和每页条数必须为正整数' })
     }
@@ -77,13 +78,16 @@ router.get('/getAllPro', async (req, res) => {
     // 计算跳过的文档数
     const skip = (page - 1) * pageSize
 
+    // 查询条件：只获取 shopStatus = 1 的商品
+    const query = { shopStatus }
+
     // 查询数据（带分页）和总记录数（使用 Promise.all 并发执行提升效率）
     const [data, total] = await Promise.all([
-      ProductModel.find()
+      ProductModel.find(query)
         .skip(skip)
         .limit(pageSize)
         .sort({ careteTime: -1 }), // 推荐按创建时间倒序，让最新商品在前
-      ProductModel.countDocuments()  // 获取总记录数
+      ProductModel.countDocuments(query)  // 获取总记录数
     ])
 
     res.json({
@@ -190,7 +194,8 @@ router.post('/searchPro', async (req, res) => {
       $or: [
         { shopName: { $regex: regex } },
         { shopMsg: { $regex: regex } }
-      ]
+      ],
+      shopStatus: 1
     }
 
     // 计算分页

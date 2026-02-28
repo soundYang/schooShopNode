@@ -1,3 +1,4 @@
+const e = require('express')
 const mongoose = require('mongoose')
 
 const ProductSchema = new mongoose.Schema({
@@ -33,12 +34,24 @@ const ProductSchema = new mongoose.Schema({
   type: Array,
   required: true  // 商品类型
  },
+ isBlindBox: {
+  type: Boolean,
+  default: true,
+  required: true  // 是否支持该商品为盲盒
+ },
+ // 发货地址
+ shippingAddress: {
+  type: String,
+  required: true  // 发货地址
+ },
  /**
   * 状态：0待审核，1上架，2下架，3违规
   */
  shopStatus: {
   type: Number,
-  default: 0  // 商品状态
+  default: 0,  // 商品状态
+  required: true,
+  enum: [0, 1, 2, 3]
  },
  careteTime: {
   type: Date,
