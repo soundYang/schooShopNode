@@ -53,7 +53,7 @@ const ProductSchema = new mongoose.Schema({
   required: true,
   enum: [0, 1, 2, 3]
  },
- careteTime: {
+ createTime: {
   type: Date,
   default: Date.now  // 创建时间
  },

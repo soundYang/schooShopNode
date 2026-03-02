@@ -225,6 +225,32 @@ router.post('/searchPro', async (req, res) => {
   }
 })
 
+// 根据关键字获取商品列表(热门商品, 新鲜好物)
+router.get('/keyProList', async (req, res) => { 
+   try{
+    const { key } = req.query
+    let query = {}
+    if(key === 'hot'){
+      query = { viewCount: -1 }
+    } else if(key === 'new'){
+      query = { craeteTime: -1 }
+    } else{
+      return res.json({
+        code: 400,
+        msg: '无效参数'
+      })
+    }
 
+    const products = await ProductModel.find().sort(query).limit(8)
+    res.json({
+      code: 200,
+      data: products,
+      msg: '获取产品列表成功'
+    })
+   } catch (error) {
+    console.error(error)
+    res.status(500).send(error)
+  }
+})
 
 module.exports = router
