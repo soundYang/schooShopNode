@@ -4,6 +4,7 @@ var path = require('path');
 var cookieParser = require('cookie-parser');
 var logger = require('morgan')
 const rateLimit = require('express-rate-limit')
+const cors = require('cors')
 
 const UserRouter = require('./routes/user')
 const ProductRouter = require('./routes/Product')
@@ -12,6 +13,7 @@ const OrderRouter = require('./routes/Order')
 const ReviewRouter = require('./routes/Review')
 
 var app = express()
+app.use(cors())
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,   // 15 分钟

@@ -38,6 +38,8 @@ router.post('/create', checkTokenMiddleware, async (req,res) => {
       })
     }
   } catch (err) {
+    console.log(err)
+    
     res.status(500).json({ code: 500, msg: '服务器错误' })
   }
 })

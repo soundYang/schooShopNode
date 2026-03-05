@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken')
 const { secret } = require('../config/index.js')
+const UserModel = require('../model/UserModel.js')
 
 const checkTokenMiddleware = async (req, res, next) => {
   // 从请求头中获取 Authorization 字段
@@ -20,13 +21,15 @@ const checkTokenMiddleware = async (req, res, next) => {
     const decoded = jwt.verify(token, secret)
     // 将用户信息挂载到 req.user 上
     // 继续执行下一个中间件或路由处理函数
-    const user = await UserModel.findById(decoded.userId).select('tokenVersion')
+    const user = await UserModel.findById(decoded._id).select('tokenVersion')
+    
     if (!user || user.tokenVersion !== decoded.version) {
       return res.status(401).json({ code: 401, msg: '账号已在其他设备登录，请重新登录' })
     }
     req.user = decoded
     next()
   } catch (error) {
+    console.log(error)
     return res.status(401).json({ code: 401, msg: '登录已过期' })
   }
 }

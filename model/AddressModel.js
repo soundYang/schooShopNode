@@ -23,7 +23,7 @@ const AddressSchema = new mongoose.Schema({
   },  
   createdAt: { 
     type: Date, 
-    default: Date.now  // 创建时间
+    default: new Date()  // 创建时间
   }   
 })
 

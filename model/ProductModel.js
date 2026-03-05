@@ -40,7 +40,7 @@ const ProductSchema = new mongoose.Schema({
   required: true  // 是否支持该商品为盲盒
  },
  // 发货地址
- shippingAddress: {
+ publishAddress: {
   type: String,
   required: true  // 发货地址
  },
@@ -55,7 +55,7 @@ const ProductSchema = new mongoose.Schema({
  },
  createTime: {
   type: Date,
-  default: Date.now  // 创建时间
+  default: new Date()  // 创建时间
  },
  viewCount: {
   type: Number,

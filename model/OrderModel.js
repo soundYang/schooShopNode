@@ -63,11 +63,11 @@ const OrderSchema = new mongoose.Schema({
   },
   orderTime:{
     type: Date,
-    default: Date.now  // 订单时间
+    default: new Date()  // 订单时间
   },
   expireAt: {
     type: Date,
-    default: () => new Date(Date.now() + 30 * 60 * 1000) // 30分钟后过期
+    default: () => new Date(new Date() + 30 * 60 * 1000) // 30分钟后过期
   }
 })
 
@@ -75,7 +75,7 @@ const OrderSchema = new mongoose.Schema({
 OrderSchema.virtual('remainTime').get(function() {
   // 如果已付款，剩余时间为0
   if (this.status !== '0') return 0
-  const now = Date.now()
+  const now = new Date()
   const expireTime = this.orderTime.getTime() + 30 * 60 * 1000
   const remaining = expireTime - now
   return remaining > 0 ? remaining : 0
@@ -89,5 +89,13 @@ OrderSchema.set('toJSON', { virtuals: true })
 OrderSchema.set('toObject', { virtuals: true })
 
 const OrderModel = mongoose.model('Order', OrderSchema)
+
+/**
+ * 这里自动删除订单，Order里面的订单的确删除，但是User里面关联的并未删除
+ * 采取下面优化就没必要上述的
+ * 
+ * 后续优化
+ * 将User里面的评价，售出和购入的商品取消关联，以及订单，靠数据库查询来获取。
+ */
 
 module.exports = OrderModel

@@ -46,6 +46,10 @@ router.post('/create', async (req, res) => {
       await OrderModel.findByIdAndDelete(order._id)
       return res.status(400).json({ code: 400, msg: '商品库存不足' })
     }
+    await UserModel.findByIdAndUpdate(buyerId, 
+      { $push: { ProductsBought: order._id } },
+      { new: true }
+    )
 
     res.json({ code: 200, data: order, msg: '订单创建成功' })
   } catch (err) {

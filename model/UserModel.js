@@ -15,12 +15,12 @@ const UserSchema = new mongoose.Schema({
     type: String,
     required: true // 密码
   },
-  StudentId: {
-    type: String,
-    required: true  // 学号
-  },
 
   // 非必填
+  StudentId: {
+    type: String,
+    default: ''  // 学号
+  },
   Addresses: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Address'   // 地址
@@ -32,7 +32,7 @@ const UserSchema = new mongoose.Schema({
   },
   CreatedTime: {
     type: Date,
-    default: Date.now // 创建时间
+    default: new Date() // 创建时间
   },
   Avatar: {
     type: String,
@@ -52,7 +52,7 @@ const UserSchema = new mongoose.Schema({
   }],
   ProductsBought: [{
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Oreder'// 购入商品
+    ref: 'Order'// 购入商品
   }],
   tokenVersion: { 
     type: Number, 

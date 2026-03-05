@@ -48,6 +48,7 @@ router.post('/userInfo', async (req,res) => {
       return res.json({ code: 400, msg: '用户名已存在' })
     }
   }
+  
   res.status(500).json({ code: 500, msg: '服务器错误' })
  }
 })
@@ -64,7 +65,13 @@ router.post('/login', async (req,res) => {
     const data = await UserModel.findOne({
       UserName,
       PassWord: md5(PassWord)
-    }).populate(['ProductsPosted','Addresses','defaultAddress']).lean()
+    }).populate([
+      'ProductsPosted',
+      'Addresses',
+      'defaultAddress', 
+      'ProductsBought',
+      'SellerReview'
+    ]).lean()
     
     if(!data) {
      return res.json({
@@ -72,10 +79,10 @@ router.post('/login', async (req,res) => {
         msg: '账号或密码错误'
       })
     }
-
+   
     // 2. 原子递增 tokenVersion，确保并发下版本号唯一
     const updatedUser = await UserModel.findByIdAndUpdate(
-      user._id,
+      data._id,
       { $inc: { tokenVersion: 1 } },  // 每次登录版本号+1
       { new: true }
     )
@@ -101,6 +108,8 @@ router.post('/login', async (req,res) => {
       })
     })
   } catch (error) {
+    console.log(error)
+    
     res.status(500).json({ code: 500, msg: '服务器错误' })
   }
 }) 
