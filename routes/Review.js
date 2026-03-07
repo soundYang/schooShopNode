@@ -54,10 +54,6 @@ router.post('/add', async (req, res) => {
       Avatar: avatar || ''
     })
 
-    // 将评论ID添加到卖家的 SellerReview 数组
-    await UserModel.findByIdAndUpdate(sellerId, {
-      $push: { SellerReview: review._id }
-    })
 
     res.json({ code: 200, data: review, msg: '评论成功' })
   } catch (err) {
@@ -82,11 +78,6 @@ router.delete('/del', async (req, res) => {
       return res.status(403).json({ code: 403, msg: '无权删除此评论' })
     }
 
-    // 从卖家的 SellerReview 数组中移除该评论ID
-    await UserModel.findByIdAndUpdate(review.sellerId, {
-      $pull: { SellerReview: reviewId }
-    })
-
     // 删除评论
     await ReviewModel.findByIdAndDelete(reviewId)
 
@@ -106,7 +97,7 @@ router.get('/list', async (req, res) => {
     if (productId) query.productId = productId
     if (userId) query.userId = userId
     if (sellerId) query.sellerId = sellerId
-
+    
     const skip = (parseInt(page) - 1) * parseInt(pageSize)
     const limit = parseInt(pageSize)
 

@@ -66,11 +66,7 @@ router.post('/login', async (req,res) => {
       UserName,
       PassWord: md5(PassWord)
     }).populate([
-      'ProductsPosted',
-      'Addresses',
-      'defaultAddress', 
-      'ProductsBought',
-      'SellerReview'
+      'Addresses'
     ]).lean()
     
     if(!data) {
@@ -117,17 +113,17 @@ router.post('/login', async (req,res) => {
 // 更新用户信息
 router.post('/updateUser',checkTokenMiddleware, async (req, res) => { 
   const _id = req.user._id
+  console.log(req.body)
+  
   try {
-    const { UserName, PassWord, Avatar } = req.body
-
     /**
      * 头像审核 
      */
 
+    if(req.body.PassWord) req.body.PassWord = md5(req.body.PassWord)
+
     const data = await UserModel.findByIdAndUpdate(_id, {
-      UserName,
-      PassWord:md5(PassWord),
-      Avatar
+      ...req.body
     })
     if (!data) {
       return res.send({
@@ -144,6 +140,49 @@ router.post('/updateUser',checkTokenMiddleware, async (req, res) => {
   }
 })
 
+// 用户密码是否正确
+router.get('/pswGetInfo', checkTokenMiddleware, async (req, res) => { 
+  try {
+    const data = await UserModel.findOne({
+      _id: req.user._id,
+      PassWord: md5(req.query.PassWord)
+    })
+    if (!data) {
+      return res.send({
+        code: 400,
+        data:{
+          isExist: false,
+        },
+        msg: '旧密码错误'
+      })
+    }
+    res.send({
+      code: 200,
+      data:{
+        isExist: true,
+      }
+    })
+  } catch (error) {
+    console.log(error)
+    
+    res.status(500).json({ code: 500, msg: '服务器错误' })
+  }
+})
+
+// 获取用户信息
+router.get('/getUserInfo', checkTokenMiddleware, async (req, res) => {
+  try {
+    const data = await UserModel.findOne({
+      _id: req.user._id
+    }, '-password')
+    res.send({
+      code: 200,
+      data
+    })
+  } catch (error) {
+    res.status(500).json({ code: 500, msg: '服务器错误' })
+  }
+})
 /**
  *  电话修改
  *  学号修改

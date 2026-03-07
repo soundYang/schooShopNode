@@ -1,6 +1,5 @@
 const express = require('express')
 const ProductModel = require('../model/ProductModel.js')
-const UserModel = require('../model/UserModel')
 const router = express.Router()
 
 const checkTokenMiddleware = require('../middlewares/checkTokenMiddelware.js')
@@ -19,12 +18,6 @@ router.post('/create', checkTokenMiddleware, async (req,res) => {
       shopStatus: 1
     }
     const data = await ProductModel.create(productData)
-
-    await UserModel.findByIdAndUpdate(
-      currentUserId, 
-      { $push: { ProductsPosted: data._id } },
-      { new: true }
-    )
 
     if(data) {
       res.send({
@@ -106,6 +99,34 @@ router.get('/getAllPro', async (req, res) => {
   }
 })
 
+// 获取单个用户发布的商品
+router.get('/getUserProducts',checkTokenMiddleware, async (req, res) => {
+  try {
+    const userId = req.user._id
+    const { page = 1, pageSize = 10 } = req.query
+
+    const skip = (parseInt(page) - 1) * parseInt(pageSize)
+    const limit = parseInt(pageSize)
+
+    const [data, total] = await Promise.all([
+      ProductModel.find({userId})
+        .skip(skip)
+        .limit(limit)
+        .sort({ careteTime: -1 }), // 推荐按创建时间倒序，让最新商品在前
+      ProductModel.countDocuments({userId})  // 获取总记录数
+    ])
+    res.json({
+      code: 200,
+      data,
+      total
+    })
+  } catch (error) {
+    console.log(error);
+    
+    res.status(500).json({ code: 500, msg: '服务器错误' })
+  }
+})
+
 // 删除商品信息
 router.delete('/delPro',checkTokenMiddleware, async (req, res) => {
   try {
@@ -116,15 +137,9 @@ router.delete('/delPro',checkTokenMiddleware, async (req, res) => {
     if (!product) {
       return res.status(404).json({ code: 404, msg: '商品不存在' })
     }
-    const userId = req.user._id // 用户id
 
     // 删除商品文档
     await ProductModel.findByIdAndDelete(productId)
-
-    // 从对应用户的 ProductsPosted 数组中移除该商品
-    await UserModel.findByIdAndUpdate(userId, {
-      $pull: { ProductsPosted: productId }
-    })
 
     res.json({ code: 200, msg: '删除成功' })
   } catch (err) {
@@ -236,7 +251,7 @@ router.get('/keyProList', async (req, res) => {
       query = { viewCount: -1 }
     } else if(key === 'new'){
       query = { craeteTime: -1 }
-    } else{
+    } else{``
       return res.json({
         code: 400,
         msg: '无效参数'
@@ -246,8 +261,7 @@ router.get('/keyProList', async (req, res) => {
     const products = await ProductModel.find().sort(query).limit(8)
     res.json({
       code: 200,
-      data: products,
-      msg: '获取产品列表成功'
+      data: products
     })
    } catch (error) {
     console.error(error)

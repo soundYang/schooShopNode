@@ -64,7 +64,7 @@ router.post('/list', async (req, res) => {
     const { page = 1, pageSize = 10, role = 'buyer', status } = req.body
     const userId = req.user._id
 
-    // 构建查询条件：根据 role 决定是买家还是卖家
+    // 构建查询条件：根据 role 决定是买家还是卖家·
     const query = {}
     if (role === 'buyer') {
       query.buyerId = userId
