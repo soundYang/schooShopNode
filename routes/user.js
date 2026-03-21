@@ -66,7 +66,8 @@ router.post('/login', async (req,res) => {
       UserName,
       PassWord: md5(PassWord)
     }).populate([
-      'Addresses'
+      'Addresses',
+      'defaultAddress'
     ]).lean()
     
     if(!data) {
@@ -174,7 +175,11 @@ router.get('/getUserInfo', checkTokenMiddleware, async (req, res) => {
   try {
     const data = await UserModel.findOne({
       _id: req.user._id
-    }, '-password')
+    }, '-PassWord').populate([
+      'Addresses',
+      'defaultAddress'
+    ]).lean() 
+
     res.send({
       code: 200,
       data
@@ -188,4 +193,49 @@ router.get('/getUserInfo', checkTokenMiddleware, async (req, res) => {
  *  学号修改
  */
 
+// 通过id获取用户简要信息
+router.get('/UserSimpleInfo', checkTokenMiddleware, async (req, res) => { 
+  try {
+    console.log(req.query.id)
+    
+    const data = await UserModel.findOne({
+      _id: req.query.id
+    }, 'UserName Avatar _id')
+    
+    res.send({
+      code: 200,
+      data
+    })
+  } catch (error) {
+    res.status(500).json({ code: 500, msg: '服务器错误' })
+  }
+})
+
+// 确认用户是否存在
+router.get('/checkUser', checkTokenMiddleware, async (req, res) => { 
+  try {
+    const { id } = req.query
+    const data = await UserModel.findOne({
+      _id: id
+    })
+    if (data) {
+      res.send({
+        code: 200,
+        data:{
+          isExist: true
+        }
+      })
+    } else {
+      res.send({
+        code: 400,
+        data:{
+          isExist: true,
+          msg: '用户不存在'
+        }
+      })
+    }
+  } catch (err) {
+    res.status(500).send(err)
+  }
+})
 module.exports = router

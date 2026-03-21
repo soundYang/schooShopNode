@@ -40,19 +40,25 @@ router.post('/create', checkTokenMiddleware, async (req,res) => {
 // 获取单个商品信息
 router.get('/getPro', async (req,res) => {
   try {
+    // 获取一次商品相当于浏览该商品 浏览次数加1
+    await ProductModel.updateOne({
+      _id: req.query.id
+    }, {
+      $inc: {
+        viewCount: 1
+      }
+    })
     const data = await ProductModel.findOne({
       _id: req.query.id
     })
     if(!data) {
       return res.send({
-        code:400,
-        msg:'获取失败'
+        code:400
       })
     }
     res.send({
       code:200,
-      data,
-      msg:'获取成功'
+      data
     })
   } catch (err) {
     res.status(500).json({ code: 500, msg: '服务器错误' })
@@ -64,7 +70,6 @@ router.get('/getAllPro', async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1          // 当前页码，默认为1
     const pageSize = parseInt(req.query.pageSize) || 10 // 每页条数，默认为10
-    const shopStatus = req.query.shopStatus  // 商品状态
     
     if (page < 1 || pageSize < 1) {
       return res.status(400).json({ code: 400, msg: '页码和每页条数必须为正整数' })
@@ -74,7 +79,7 @@ router.get('/getAllPro', async (req, res) => {
     const skip = (page - 1) * pageSize
 
     // 查询条件：只获取 shopStatus = 1 的商品
-    const query = { shopStatus }
+    const query = { shopStatus: 1 }
 
     // 查询数据（带分页）和总记录数（使用 Promise.all 并发执行提升效率）
     const [data, total] = await Promise.all([
@@ -91,8 +96,7 @@ router.get('/getAllPro', async (req, res) => {
       total,           // 总记录数
       page,            // 当前页码
       pageSize,        // 每页条数
-      totalPages: Math.ceil(total / pageSize), // 总页数
-      msg: '获取成功'
+      totalPages: Math.ceil(total / pageSize) // 总页数
     })
   } catch (err) {
     res.status(500).json({ code: 500, msg: '服务器错误' })
@@ -102,7 +106,12 @@ router.get('/getAllPro', async (req, res) => {
 // 获取单个用户发布的商品
 router.get('/getUserProducts',checkTokenMiddleware, async (req, res) => {
   try {
-    const userId = req.user._id
+    let userId
+    if(req.query.id){
+      userId = req.query.id
+    } else {
+      userId = req.user._id
+    }
     const { page = 1, pageSize = 10 } = req.query
 
     const skip = (parseInt(page) - 1) * parseInt(pageSize)
@@ -224,7 +233,7 @@ router.post('/searchPro', async (req, res) => {
       ProductModel.find(query)
         .skip(skip)
         .limit(limit)
-        .sort({ careteTime: -1 }), // 按创建时间倒序
+        .sort({ viewCount: 1 }), // 按浏览量排序
       ProductModel.countDocuments(query)
     ])
 
@@ -246,11 +255,13 @@ router.post('/searchPro', async (req, res) => {
 router.get('/keyProList', async (req, res) => { 
    try{
     const { key } = req.query
-    let query = {}
+    const query = {
+      shopStatus: 1
+    }
     if(key === 'hot'){
-      query = { viewCount: -1 }
+      query.viewCount = -1 
     } else if(key === 'new'){
-      query = { craeteTime: -1 }
+      query.craeteTime = -1 
     } else{``
       return res.json({
         code: 400,
@@ -266,6 +277,66 @@ router.get('/keyProList', async (req, res) => {
    } catch (error) {
     console.error(error)
     res.status(500).send(error)
+  }
+})
+
+// 根据标签搜索商品（支持分页）
+router.post('/tagSearch', async (req, res) => {
+  try {
+    const { tags, page = 1, pageSize = 10 } = req.body.params
+    // 如果没有提供标签，返回空数组（或可按需求返回所有商品）
+
+    if (!tags || (Array.isArray(tags) && tags.length === 0)) {
+      return res.json({
+        code: 200,
+        data: [],
+        total: 0,
+        msg: '请提供标签列表'
+      })
+    }
+
+    // 处理 tags 参数：可以是数组，也可以是逗号分隔的字符串
+    let tagArray = []
+    if (Array.isArray(tags)) {
+      tagArray = tags
+    } else if (typeof tags === 'string') {
+      tagArray = tags.split(',').map(t => t.trim()).filter(t => t)
+    }
+
+    if (tagArray.length === 0) {
+      return res.json({
+        code: 200,
+        data: [],
+        total: 0,
+      })
+    }
+
+    // 构建查询条件：shopStatus = 1，且 shopType 字段包含任一给定标签（$in）
+    const query = { shopStatus: 1, shopType: { $in: tagArray } }
+
+    const skip = (parseInt(page) - 1) * parseInt(pageSize)
+    const limit = parseInt(pageSize)
+
+    // 并行查询商品列表和总数
+    const [products, total] = await Promise.all([
+      ProductModel.find(query)
+        .skip(skip)
+        .limit(limit)
+        .sort({ createTime: -1 }), // 按创建时间倒序
+      ProductModel.countDocuments(query)
+    ])
+
+    res.json({
+      code: 200,
+      data: products,
+      total,
+      page: parseInt(page),
+      pageSize: parseInt(pageSize),
+      totalPages: Math.ceil(total / parseInt(pageSize)),
+    })
+  } catch (error) {
+    console.error('标签搜索失败：', error)
+    res.status(500).json({ code: 500, msg: '服务器错误' })
   }
 })
 

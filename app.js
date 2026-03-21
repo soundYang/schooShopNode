@@ -11,6 +11,7 @@ const ProductRouter = require('./routes/Product')
 const AddressRouter = require('./routes/Address')
 const OrderRouter = require('./routes/Order')
 const ReviewRouter = require('./routes/Review')
+const LabelRouter = require('./routes/Label')
 
 var app = express()
 app.use(cors())
@@ -37,6 +38,7 @@ app.use('/product', ProductRouter)
 app.use('/address', AddressRouter)
 app.use('/order', OrderRouter)
 app.use('/review', ReviewRouter)
+app.use('/label', LabelRouter)
 
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {

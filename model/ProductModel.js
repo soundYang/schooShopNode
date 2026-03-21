@@ -41,7 +41,7 @@ const ProductSchema = new mongoose.Schema({
  },
  // 发货地址
  publishAddress: {
-  type: String,
+  type: Object,
   required: true  // 发货地址
  },
  /**

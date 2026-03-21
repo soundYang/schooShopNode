@@ -63,12 +63,13 @@ router.get('/list', async (req, res) => {
 
 // 更新地址
 router.post('/update', async (req, res) => {
-  const { addressId, ...updateData } = req.body
+
+  const { _id: addressId, ...updateData } = req.body
   const userId = req.user._id
   
   /**
    * 地址信息校验
-   */
+   */ 
 
  try { 
     // 确保该地址属于当前用户（安全）
