@@ -16,6 +16,15 @@ const LabelRouter = require('./routes/Label')
 var app = express()
 app.use(cors())
 
+// 提供静态文件服务
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
+
+// 确保 uploads 目录存在
+const fs = require('fs')
+if (!fs.existsSync('uploads')) {
+  fs.mkdirSync('uploads')
+}
+
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,   // 15 分钟
   max: 10,                     // 每个 IP 最多 10 次请求

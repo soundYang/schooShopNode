@@ -1,39 +1,82 @@
 const express = require('express')
+const multer = require('multer')  
 const ProductModel = require('../model/ProductModel.js')
 const router = express.Router()
-
 const checkTokenMiddleware = require('../middlewares/checkTokenMiddelware.js')
 
-// 创建商品信息
-router.post('/create', checkTokenMiddleware, async (req,res) => {
+// 配置 multer 用于文件上传
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'uploads/') // 上传文件保存路径
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9)
+    cb(null, uniqueSuffix + '-' + file.originalname)
+  }
+})
+
+const upload = multer({ 
+  storage: storage,
+  limits: {
+    fileSize: 2 * 1024 * 1024 // 限制单个文件 2MB
+  },
+  fileFilter: (req, file, cb) => {
+    // 只允许图片格式
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true)
+    } else {
+      cb(new Error('只能上传图片文件'), false)
+    }
+  }
+})
+
+// 创建商品信息（支持文件上传）
+router.post('/create', checkTokenMiddleware, upload.array('shopImg', 6), async (req, res) => {
   try {
     const currentUserId = req.user._id
-
-    /**
-     * 商品信息校验
-     */
+    
+    // 处理上传的图片文件
+    const imageUrls = req.files ? req.files.map(file => {
+      // 这里应该返回图片的访问URL，根据你的实际配置
+      // 如果是本地存储，返回文件路径；如果是云存储，返回云存储URL
+      return `/uploads/${file.filename}`
+    }) : []
+    
+    // 解析 JSON 字符串字段
+    const shopType = req.body.shopType ? JSON.parse(req.body.shopType) : []
+    const publishAddress = req.body.publishAddress ? JSON.parse(req.body.publishAddress) : {}
+    
+    // 构建商品数据
     const productData = {
-      ...req.body,
+      shopName: req.body.shopName,
+      shopPrice: parseFloat(req.body.shopPrice),
+      shopActualValue: parseFloat(req.body.shopActualValue),
+      shopNum: parseInt(req.body.shopNum),
+      shopMsg: req.body.shopMsg,
+      isBlinBox: req.body.isBlinBox === 'true',
+      shopType: shopType,
+      publishAddress: publishAddress,
+      shopImg: imageUrls, // 存储图片URL数组
       userId: currentUserId,
       shopStatus: 1
     }
+    
     const data = await ProductModel.create(productData)
-
-    if(data) {
+    
+    if (data) {
       res.send({
-        code:200,
-        msg:'创建成功'
+        code: 200,
+        msg: '创建成功'
       })
     } else {
       res.send({
-        code:400,
-        msg:'创建失败'
+        code: 400,
+        msg: '创建失败'
       })
     }
   } catch (err) {
     console.log(err)
-    
-    res.status(500).json({ code: 500, msg: '服务器错误' })
+    res.status(500).json({ code: 500, msg: '服务器错误', error: err.message })
   }
 })
 
