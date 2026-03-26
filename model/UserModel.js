@@ -41,7 +41,17 @@ const UserSchema = new mongoose.Schema({
   tokenVersion: { 
     type: Number, 
     default: 0 
-  }   // 用于单点登录
+  },   // 用于单点登录
+  // 余额
+  Balance: {
+    type: Number,
+    default: 0
+  },
+  // 盲盒列表
+  BlindBoxList: {
+    type: Array,
+    default: []
+  }
 })
 
 const UserModel = mongoose.model('user', UserSchema)

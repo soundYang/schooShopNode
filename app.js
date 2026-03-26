@@ -32,6 +32,9 @@ const limiter = rateLimit({
 })
 app.use('/login', limiter)     // 仅对登录接口限流
 
+app.use(express.json({ limit: '2mb' }))          // 增加到 2MB
+app.use(express.urlencoded({ extended: true, limit: '2mb' }))
+
 // view engine setup
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'jade');

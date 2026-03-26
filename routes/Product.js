@@ -3,6 +3,8 @@ const multer = require('multer')
 const ProductModel = require('../model/ProductModel.js')
 const router = express.Router()
 const checkTokenMiddleware = require('../middlewares/checkTokenMiddelware.js')
+const fs = require('fs').promises  
+const path = require('path')
 
 // 配置 multer 用于文件上传
 const storage = multer.diskStorage({
@@ -180,22 +182,43 @@ router.get('/getUserProducts',checkTokenMiddleware, async (req, res) => {
 })
 
 // 删除商品信息
-router.delete('/delPro',checkTokenMiddleware, async (req, res) => {
+router.delete('/delPro', checkTokenMiddleware, async (req, res) => {
   try {
-    const productId = req.query._id  // 商品id
+    const productId = req.query._id
+    console.log(req.query)
+    
 
-    // 先查询商品，获取发布者的 userId
-    const product = await ProductModel.findById(productId) 
+    // 1. 查询商品
+    const product = await ProductModel.findById(productId)
     if (!product) {
       return res.status(404).json({ code: 404, msg: '商品不存在' })
     }
 
-    // 删除商品文档
+    // 2. 删除关联的图片文件（如果有）
+    if (product.shopImg && product.shopImg.length) {
+      // 并行删除所有图片
+      const deletePromises = product.shopImg.map(async (imgUrl) => {
+        try {
+          // 提取文件名（例如 /uploads/xxx.jpg -> xxx.jpg）
+          const filename = path.basename(imgUrl)
+          const filePath = path.join(__dirname, '../uploads', filename)
+          await fs.unlink(filePath)
+          console.log(`已删除图片: ${filePath}`)
+        } catch (err) {
+          // 文件可能不存在，忽略错误
+          console.warn(`删除图片失败（可能已不存在）: ${imgUrl}`, err.message)
+        }
+      })
+      await Promise.all(deletePromises)
+    }
+
+    // 3. 删除数据库中的商品记录
     await ProductModel.findByIdAndDelete(productId)
 
     res.json({ code: 200, msg: '删除成功' })
   } catch (err) {
-   res.status(500).json({ code: 500, msg: '服务器错误' })
+    console.error(err)
+    res.status(500).json({ code: 500, msg: '服务器错误' })
   }
 })
 
@@ -381,6 +404,20 @@ router.post('/tagSearch', async (req, res) => {
     console.error('标签搜索失败：', error)
     res.status(500).json({ code: 500, msg: '服务器错误' })
   }
+})
+
+/**
+ * 盲盒
+ * 价格随机
+ * 价格数据 [0.99 6.99 9.99 19.9 39.9 69.9]
+ * 然后从库中抽取对应价格的上下浮动0.5 ~ 1.5倍的价格的随机商品（随机商品用户上传时可以选择，即isBlindBox为true时为可作为盲盒商品 ）10件，再从中抽取一个商品，作为盲盒商品
+ * 用户的model中添加字段,盲盒商品 对象 里面是对应的随机价格和具体商品id 总共四条数据
+ * 抽取到的商品库存会先减一
+ * 每天八点二十，盲盒会自动刷新
+ * 刷新时 如果盲盒的商品没有购买，则会将库存还原，即加一
+ */
+// 获取盲盒商品
+router.get('/blindBox', async (req, res) => { 
 })
 
 module.exports = router

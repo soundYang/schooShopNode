@@ -81,7 +81,7 @@ router.post('/login', async (req,res) => {
     const updatedUser = await UserModel.findByIdAndUpdate(
       data._id,
       { $inc: { tokenVersion: 1 } },  // 每次登录版本号+1
-      { new: true }
+      {  returnDocument: 'after' }
     )
 
     const token = jwt.sign({
@@ -113,9 +113,7 @@ router.post('/login', async (req,res) => {
 
 // 更新用户信息
 router.post('/updateUser',checkTokenMiddleware, async (req, res) => { 
-  const _id = req.user._id
-  console.log(req.body)
-  
+  const _id = req.user._id  
   try {
     /**
      * 头像审核 
