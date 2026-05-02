@@ -12,6 +12,8 @@ const AddressRouter = require('./routes/Address')
 const OrderRouter = require('./routes/Order')
 const ReviewRouter = require('./routes/Review')
 const LabelRouter = require('./routes/Label')
+const blindBox = require('./routes/BlindBox')
+const NotificationRouter = require('./routes/Notification')
 
 var app = express()
 app.use(cors())
@@ -51,6 +53,8 @@ app.use('/address', AddressRouter)
 app.use('/order', OrderRouter)
 app.use('/review', ReviewRouter)
 app.use('/label', LabelRouter)
+app.use('/blindBox', blindBox)
+app.use('/notification', NotificationRouter)
 
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {

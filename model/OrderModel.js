@@ -3,15 +3,16 @@ const mongoose = require('mongoose')
 const OrderSchema = new mongoose.Schema({
   buyerId:{
     type: String,
-    required: true  // 卖家id
+    required: true
   },
   sellerId:{
     type: String,
-    required: true  // 买家id
+    required: true
   },
   productId:{
-    type: String,
-    required: true  // 商品id
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Product',
+    required: true
   },
   quantity:{
     type: Number,
@@ -47,7 +48,7 @@ const OrderSchema = new mongoose.Schema({
   },
   deliverAddress:{
     type: String,
-    required: true  // 收货地址
+    default: ''
   },
   isBlindBox:{
     type: Boolean,
@@ -63,26 +64,47 @@ const OrderSchema = new mongoose.Schema({
   },
   orderTime:{
     type: Date,
-    default: new Date()  // 订单时间
+    default: Date.now  // 订单时间
   },
   expireAt: {
     type: Date,
-    default: () => new Date(new Date() + 30 * 60 * 1000) // 30分钟后过期
+    default: function() {
+      return this.isBlindBox ? null : new Date(Date.now() + 30 * 60 * 1000)
+    }
+  },
+  cancelReason: {
+    type: String,
+    default: ''
+  },
+  cancelTime: {
+    type: Date
+  },
+  cancelBy: {
+    type: String,
+    enum: ['buyer', 'seller', ''],
+    default: ''
   }
 })
 
 // 虚拟字段：剩余付款时间（毫秒）
 OrderSchema.virtual('remainTime').get(function() {
-  // 如果已付款，剩余时间为0
-  if (this.status !== '0') return 0
+  if (this.status !== 0) return 0
+  // 盲盒订单永不过期（前端用于判断是否显示"已超时"）
+  if (this.isBlindBox) return -1
   const now = new Date()
   const expireTime = this.orderTime.getTime() + 30 * 60 * 1000
   const remaining = expireTime - now
   return remaining > 0 ? remaining : 0
 })
 
-// 设置 TTL 索引（可选）：自动删除过期未付款的订单
-OrderSchema.index({ expireAt: 1 }, { expireAfterSeconds: 0 })
+// 设置 TTL 索引（可选）：自动删除过期未付款的订单（排除盲盒订单）
+OrderSchema.index(
+    { expireAt: 1 },
+    {
+        expireAfterSeconds: 0,
+        partialFilterExpression: { isBlindBox: { $ne: true } }
+    }
+)
 
 // 确保虚拟字段在 JSON 输出中包含
 OrderSchema.set('toJSON', { virtuals: true })

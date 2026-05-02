@@ -1,3 +1,7 @@
+/**
+ * 扩张模糊搜索
+ */
+
 const express = require('express')
 const multer = require('multer')  
 const ProductModel = require('../model/ProductModel.js')

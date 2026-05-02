@@ -3,6 +3,7 @@ const router = express.Router()
 const ReviewModel = require('../model/ReviewModel')
 const ProductModel = require('../model/ProductModel')
 const UserModel = require('../model/UserModel')
+const NotificationModel = require('../model/NotificationModel')
 const checkTokenMiddleware = require('../middlewares/checkTokenMiddelware')
 
 router.use(checkTokenMiddleware)
@@ -10,22 +11,22 @@ router.use(checkTokenMiddleware)
 // 添加评论
 router.post('/add', async (req, res) => {
   try {
-    const { productId, sellerId, content, proPhoto, avatar } = req.body
+    const { productId, sellerId, orderId, content, proPhoto, avatar } = req.body
     const userId = req.user._id
     const userName = req.user.UserName
 
-    if (!productId || !sellerId || !content) {
-      return res.status(400).json({ code: 400, msg: '商品ID、卖家ID和评论内容不能为空' })
+    if (!productId || !sellerId || !orderId || !content) {
+      return res.status(400).json({ code: 400, msg: '商品ID、卖家ID、订单ID和评论内容不能为空' })
     }
 
     /**
      * 审核评论和图片
      */
 
-    // 可选：检查是否已评价过该商品
-    const existing = await ReviewModel.findOne({ userId, productId })
+    // 检查是否已评价过该订单
+    const existing = await ReviewModel.findOne({ userId, orderId })
     if (existing) {
-      return res.status(400).json({ code: 400, msg: '您已经评价过该商品' })
+      return res.status(400).json({ code: 400, msg: '该订单已评价' })
     }
 
     // 验证商品是否存在且卖家ID与商品所属卖家一致（防止恶意评价）
@@ -49,11 +50,20 @@ router.post('/add', async (req, res) => {
       userId,
       sellerId,
       productId,
+      orderId,
       content,
       proPhoto: proPhoto || '',
       Avatar: avatar || ''
     })
 
+    // 通知卖家
+    await NotificationModel.create({
+      userId: sellerId,
+      type: 'new_review',
+      title: '收到新评价',
+      message: `${userName} 评价了您的商品：${content}`,
+      orderId
+    })
 
     res.json({ code: 200, data: review, msg: '评论成功' })
   } catch (err) {

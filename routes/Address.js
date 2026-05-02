@@ -2,7 +2,9 @@ const express = require('express')
 const router = express.Router()
 const UserModel = require('../model/UserModel')
 const AddressModel = require('../model/AddressModel')
+const OrderModel = require('../model/OrderModel')
 const checkTokenMiddleware = require('../middlewares/checkTokenMiddelware')
+const { maskAddressesPhone } = require('../ToolFunction/maskPhone')
 
 router.use(checkTokenMiddleware)
 
@@ -27,8 +29,14 @@ router.post('/add',  async (req, res) => {
       msg: '最多添加6个地址'
     })
   }
-    // 创建地址文档
-  const address = await AddressModel.create({ ...addressData, userId })
+  
+  let address = null
+  // 创建地址文档
+  if(count === 0) {
+    address = await AddressModel.create({ ...addressData, isDefault: true, userId })
+  } else {
+    address = await AddressModel.create({ ...addressData, userId })
+  }
  
   // 将地址 ID 添加到用户 addresses 数组
   await UserModel.findByIdAndUpdate(userId, {
@@ -42,7 +50,7 @@ router.post('/add',  async (req, res) => {
     await AddressModel.updateMany({ userId, _id: { $ne: address._id } }, { isDefault: false })
   }
 
-  res.json({ code: 200, msg: '地址添加成功' })
+  res.json({ code: 200 })
  } catch (error) {
   res.status(500).json({ code: 500, msg: '服务器错误' })
  }
@@ -55,7 +63,53 @@ router.get('/list', async (req, res) => {
   
   try {
     const addresses = await AddressModel.find({ userId }).sort({ isDefault: -1, createdAt: -1 })
-    res.json({ code: 200, data: addresses })
+    res.json({ code: 200, data: maskAddressesPhone(addresses) })
+  } catch (error) {
+    res.status(500).json({ code: 500, msg: '服务器错误' })
+  }
+})
+
+// 根据 id 获取单个地址
+router.get('/one', async (req, res) => {
+  const { id, orderId } = req.query
+  const userId = req.user._id
+
+  if (!id) {
+    return res.status(400).json({ code: 400, msg: '缺少地址 id' })
+  }
+
+  try {
+    let address = null
+
+    if (orderId) {
+      // 通过订单查看地址（买家和卖家均可）
+      const order = await OrderModel.findById(orderId)
+      if (!order) {
+        return res.status(404).json({ code: 404, msg: '订单不存在' })
+      }
+      if (String(order.buyerId) !== String(userId) && String(order.sellerId) !== String(userId)) {
+        return res.status(403).json({ code: 403, msg: '无权限查看此地址' })
+      }
+
+      address = await AddressModel.findById(id)
+      if (address) {
+        // 买家只能看自己的地址，卖家只能看订单买家的地址
+        const isBuyer = String(order.buyerId) === String(userId)
+        const isSeller = String(order.sellerId) === String(userId)
+        const addrOwnerId = String(address.userId)
+        if ((isBuyer && addrOwnerId !== String(userId)) || (isSeller && addrOwnerId !== String(order.buyerId))) {
+          return res.status(403).json({ code: 403, msg: '无权限查看此地址' })
+        }
+      }
+    } else {
+      // 查看自己的地址
+      address = await AddressModel.findOne({ _id: id, userId })
+    }
+
+    if (!address) {
+      return res.status(404).json({ code: 404, msg: '地址不存在' })
+    }
+    res.json({ code: 200, data: maskAddressesPhone(address) })
   } catch (error) {
     res.status(500).json({ code: 500, msg: '服务器错误' })
   }
@@ -88,7 +142,7 @@ router.post('/update', async (req, res) => {
     await UserModel.findByIdAndUpdate(userId, { defaultAddress: addressId })
   }
 
-  res.json({ code: 200,  msg: '更新成功' })
+  res.json({ code: 200 })
  } catch (error) {
   res.status(500).json({ code: 500, msg: '服务器错误' })
  }
@@ -114,7 +168,7 @@ router.delete('/del', async (req, res) => {
         await user.save()
       }
 
-      res.json({ code: 200, msg: '删除成功' })
+      res.json({ code: 200 })
   } catch (error) {
     res.status(500).json({ code: 500, msg: '服务器错误' })
   }

@@ -17,6 +17,10 @@ const ReviewSchema = new mongoose.Schema({
     type: String,
     required: true  // 商品id
   },
+  orderId: {
+    type: String,
+    required: true  // 订单id
+  },
   content: {
     type: String,
     required: true  // 评论内容

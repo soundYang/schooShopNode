@@ -9,6 +9,7 @@ const checkTokenMiddleware = require('../middlewares/checkTokenMiddelware')
 
 const { loginLog } = require('../ToolFunction/loginLog')  // 登录日志
 const { logRegister } = require('../ToolFunction/loggerLog') // 注册日志
+const { maskPhone, maskAddressesPhone } = require('../ToolFunction/maskPhone')
 
 // 创建用户
 router.post('/userInfo', async (req,res) => {
@@ -91,6 +92,9 @@ router.post('/login', async (req,res) => {
     }, secret, { expiresIn: '7d' })
 
     delete data.PassWord
+    if (data.PhoneNumber) data.PhoneNumber = maskPhone(data.PhoneNumber)
+    if (data.Addresses) maskAddressesPhone(data.Addresses)
+    if (data.defaultAddress) maskAddressesPhone(data.defaultAddress)
     res.json({
       code: 200,
       data: {
@@ -112,7 +116,29 @@ router.post('/login', async (req,res) => {
 }) 
 
 // 更新用户信息
-router.post('/updateUser',checkTokenMiddleware, async (req, res) => { 
+/**
+ * 仅仅支持用户密码, 用户昵称
+ */
+router.post('/updateUser',checkTokenMiddleware, async (req, res) => {
+  console.log(req.body);
+   
+  const updateInfo = {
+    ...req.body,
+    [Symbol.iterator]: function * () {
+      yield* Object.keys(updateInfo)
+    }
+  }
+
+  for(const key of updateInfo){
+    if(key !== 'PassWord' || key !== 'UserName'){
+      return res.json({
+        code: 400,
+        msg: '权限不足'
+      })
+    }
+  }
+
+  
   const _id = req.user._id  
   try {
     /**
@@ -176,7 +202,13 @@ router.get('/getUserInfo', checkTokenMiddleware, async (req, res) => {
     }, '-PassWord').populate([
       'Addresses',
       'defaultAddress'
-    ]).lean() 
+    ]).lean()
+
+    if (data) {
+      if (data.PhoneNumber) data.PhoneNumber = maskPhone(data.PhoneNumber)
+      if (data.Addresses) maskAddressesPhone(data.Addresses)
+      if (data.defaultAddress) maskAddressesPhone(data.defaultAddress)
+    }
 
     res.send({
       code: 200,
@@ -194,7 +226,7 @@ router.get('/getUserInfo', checkTokenMiddleware, async (req, res) => {
 // 通过id获取用户简要信息
 router.get('/UserSimpleInfo', checkTokenMiddleware, async (req, res) => { 
   try {
-    console.log(req.query.id)
+   
     
     const data = await UserModel.findOne({
       _id: req.query.id

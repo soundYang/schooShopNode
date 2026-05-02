@@ -45,12 +45,8 @@ const UserSchema = new mongoose.Schema({
   // 余额
   Balance: {
     type: Number,
-    default: 0
-  },
-  // 盲盒列表
-  BlindBoxList: {
-    type: Array,
-    default: []
+    default: 0,
+    set: v => Math.round(v * 100) / 100
   }
 })
 
