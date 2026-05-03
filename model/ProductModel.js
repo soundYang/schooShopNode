@@ -1,67 +1,67 @@
-const e = require('express')
 const mongoose = require('mongoose')
 
 const ProductSchema = new mongoose.Schema({
   userId: {
   type: String,
-  required: true  // 用户id
+  required: true
  },
  shopName: {
   type: String,
-  required: true  // 商品名称
+  required: true
  },
  shopPrice: {
   type: Number,
-  required: true  // 商品价格
+  required: true
  },
  shopActualValue: {
   type: Number,
-  required: true  // 商品估值
+  required: true
  },
  shopImg: {
   type: Array,
-  required: true  // 商品图片
+  required: true
  },
  shopNum: {
   type: Number,
-  required: true  // 商品数量
+  required: true
  },
  shopMsg: {
   type: String,
-  required: true  // 商品信息
+  required: true
  },
  shopType: {
   type: Array,
-  required: true  // 商品类型
+  required: true
  },
  isBlindBox: {
   type: Boolean,
   default: true,
-  required: true  // 是否支持该商品为盲盒
+  required: true
  },
- // 发货地址
  publishAddress: {
   type: Object,
-  required: true  // 发货地址
+  required: true
  },
- /**
-  * 状态：0待审核，1上架，2下架，3违规
-  */
  shopStatus: {
   type: Number,
-  default: 0,  // 商品状态
+  default: 0,
   required: true,
   enum: [0, 1, 2, 3]
  },
  createTime: {
   type: Date,
-  default: new Date()  // 创建时间
+  default: Date.now
  },
  viewCount: {
   type: Number,
-  default: 0   // 浏览次数
+  default: 0
  }
 })
+
+ProductSchema.index({ shopStatus: 1, viewCount: -1, createTime: -1 })
+ProductSchema.index({ userId: 1, createTime: -1 })
+ProductSchema.index({ shopStatus: 1, shopType: 1 })
+ProductSchema.index({ isBlindBox: 1, shopNum: 1 })
 
 const ProductModel = mongoose.model('Product', ProductSchema)
 

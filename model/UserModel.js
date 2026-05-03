@@ -32,7 +32,7 @@ const UserSchema = new mongoose.Schema({
   },
   CreatedTime: {
     type: Date,
-    default: new Date() // 创建时间
+    default: Date.now
   },
   Avatar: {
     type: String,

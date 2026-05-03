@@ -1,28 +1,53 @@
-// services/blindBoxService.js
-
-/**
- * 修改
- * 如果未找到符合价格的商品就重新随机价格
- * 重复次数达三次，抛出错误，提示用户商品库存不足
- * 同一个用户获取的盲盒的商品不能重复
- * 
- * 商品总数量大于150开启盲盒
- * 低于80关闭盲盒
- */
-const Product = require('../model/ProductModel')
+﻿const Product = require('../model/ProductModel')
 const BlindBoxRecord = require('../model/BlindBoxRecordModel')
 const User = require('../model/UserModel')
 const OrderModel = require('../model/OrderModel')
+const ConfigModel = require('../model/ConfigModel')
 const mongoose = require('mongoose')
 
 const PRICE_POOL = [0.99, 6.99, 9.99, 19.9, 39.9, 69.9]
 
-/**
- * 根据随机价格，从符合条件的盲盒商品中随机抽取一个
- * @param {number} randomPrice 
- * @param {Array} excludeProductIds 需要排除的商品 ID 列表
- * @returns {Promise<Object>} 商品文档
- */
+const BLIND_BOX_OPEN_THRESHOLD = 150
+const BLIND_BOX_CLOSE_THRESHOLD = 80
+const CONFIG_KEY = 'blindBoxOpen'
+
+async function getBlindBoxProductCount() {
+  return await Product.countDocuments({ isBlindBox: true, shopStatus: 1, shopNum: { $gt: 0 } })
+}
+
+async function isBlindBoxOpen() {
+  const config = await ConfigModel.findOne({ key: CONFIG_KEY })
+  return config ? config.value : false
+}
+
+async function setBlindBoxOpen(open) {
+  await ConfigModel.findOneAndUpdate(
+    { key: CONFIG_KEY },
+    { value: open },
+    { upsert: true }
+  )
+}
+
+async function checkAndUpdateBlindBoxState() {
+  const productCount = await getBlindBoxProductCount()
+  const currentlyOpen = await isBlindBoxOpen()
+
+  if (currentlyOpen) {
+    if (productCount <= BLIND_BOX_CLOSE_THRESHOLD) {
+      await setBlindBoxOpen(false)
+      return { open: false, count: productCount, changed: true }
+    }
+    return { open: true, count: productCount, changed: false }
+  }
+
+  if (productCount > BLIND_BOX_OPEN_THRESHOLD) {
+    await setBlindBoxOpen(true)
+    return { open: true, count: productCount, changed: true }
+  }
+
+  return { open: false, count: productCount, changed: false }
+}
+
 async function selectProductByPrice(randomPrice, excludeProductIds = []) {
   const min = randomPrice * 0.5
   const max = randomPrice * 1.5
@@ -33,37 +58,28 @@ async function selectProductByPrice(randomPrice, excludeProductIds = []) {
     _id: { $nin: excludeProductIds }
   }
 
-  // 查找符合条件且库存>0的盲盒商品，按 shopActualValue 匹配
   const candidates = await Product.find({
     ...baseFilter,
     shopActualValue: { $gte: min, $lte: max }
   }).limit(10)
 
-  if (candidates.length === 0) {
-    // 降级：放宽范围（无价格限制），或从所有盲盒商品中抽取
-    const fallback = await Product.find(baseFilter).limit(10)
-    if (fallback.length === 0) throw new Error('没有可用的盲盒商品')
-    return fallback[Math.floor(Math.random() * fallback.length)]
-  }
+  if (candidates.length === 0) return null
 
-  // 随机选择一条
   return candidates[Math.floor(Math.random() * candidates.length)]
 }
 
-/**
- * 为单个用户生成当天的盲盒（4个）
- * @param {string} userId 
- * @param {string} date 
- */
 async function generateUserBlindBoxes(userId, date) {
   const existing = await BlindBoxRecord.findOne({ userId, date })
   if (existing) return existing
 
-  // 排除用户自己卖的商品
+  const state = await checkAndUpdateBlindBoxState()
+  if (!state.open) {
+    throw new Error('盲盒暂未开放，商品种类不足')
+  }
+
   const ownProducts = await Product.find({ userId }).select('_id')
   const ownProductIds = ownProducts.map(p => p._id)
 
-  // 排除用户有活跃订单（待付款/已付款/已发货）的商品
   const activeOrders = await OrderModel.find({
     buyerId: String(userId),
     status: { $in: [0, 1, 2] }
@@ -71,21 +87,35 @@ async function generateUserBlindBoxes(userId, date) {
   const orderingProductIds = activeOrders.map(o => o.productId)
 
   const excludeProductIds = [...ownProductIds, ...orderingProductIds]
+  const MAX_RETRIES = 3
 
   const boxes = []
   for (let i = 0; i < 4; i++) {
-    const randomPrice = PRICE_POOL[Math.floor(Math.random() * PRICE_POOL.length)]
-    let product = await selectProductByPrice(randomPrice, excludeProductIds)
-    if (!product) continue
+    let product = null
+
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      const randomPrice = PRICE_POOL[Math.floor(Math.random() * PRICE_POOL.length)]
+
+      product = await selectProductByPrice(randomPrice, excludeProductIds)
+      if (product) break
+    }
+
+    if (!product) {
+      throw new Error('盲盒商品种类不足，无法生成足够的盲盒')
+    }
 
     const updated = await Product.findByIdAndUpdate(
       product._id,
       { $inc: { shopNum: -1 } },
       { new: true }
     )
-    if (!updated || updated.shopNum < 0) continue
+    if (!updated || updated.shopNum < 0) {
+      i--
+      continue
+    }
 
-    // 获取第一个标签，若 shopType 为空则设为空字符串
+    excludeProductIds.push(product._id)
+
     const firstLabel = product.shopType && product.shopType.length > 0 ? product.shopType[0] : ''
 
     boxes.push({
@@ -96,7 +126,7 @@ async function generateUserBlindBoxes(userId, date) {
         images: product.shopImg,
         actualValue: product.shopActualValue,
         msg: product.shopMsg,
-        label: firstLabel    // 存储第一个标签
+        label: firstLabel
       },
       status: 0,
       createdAt: new Date()
@@ -110,10 +140,13 @@ async function generateUserBlindBoxes(userId, date) {
   return record
 }
 
-/**
- * 批量生成所有用户的每日盲盒（定时任务调用）
- */
 async function generateDailyBlindBoxes() {
+  const state = await checkAndUpdateBlindBoxState()
+  if (!state.open) {
+    console.log(`盲盒未开放（当前 ${state.count} 种商品），跳过今日生成`)
+    return
+  }
+
   const today = new Date().toISOString().split('T')[0]
   const users = await User.find({}, '_id')
   for (const user of users) {
@@ -126,9 +159,6 @@ async function generateDailyBlindBoxes() {
   console.log('每日盲盒生成完成')
 }
 
-/**
- * 恢复昨天未购买盲盒的库存，并删除过期记录
- */
 async function restorePreviousBlindBoxes() {
   const yesterday = new Date()
   yesterday.setDate(yesterday.getDate() - 1)
@@ -138,17 +168,19 @@ async function restorePreviousBlindBoxes() {
   for (const record of records) {
     for (const box of record.boxes) {
       if (box.status === 0) {
-        // 未购买，恢复库存
         await Product.findByIdAndUpdate(box.productId, { $inc: { shopNum: 1 } })
       }
     }
   }
-  // 删除旧记录（可选）
   await BlindBoxRecord.deleteMany({ date: yesterdayStr })
 }
 
 module.exports = {
   generateDailyBlindBoxes,
   generateUserBlindBoxes,
-  restorePreviousBlindBoxes
+  restorePreviousBlindBoxes,
+  checkAndUpdateBlindBoxState,
+  getBlindBoxProductCount,
+  BLIND_BOX_OPEN_THRESHOLD,
+  BLIND_BOX_CLOSE_THRESHOLD
 }

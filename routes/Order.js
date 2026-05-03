@@ -19,7 +19,7 @@ const ProductModel = require('../model/ProductModel')
 const UserModel = require('../model/UserModel')
 const NotificationModel = require('../model/NotificationModel')
 
-const checkTokenMiddleware = require('../middlewares/checkTokenMiddelware')
+const checkTokenMiddleware = require('../middlewares/checkTokenMiddleware')
 
 router.use(checkTokenMiddleware)
 
@@ -69,7 +69,7 @@ router.post('/create', async (req, res) => {
       userId: sellerId,
       type: 'new_order',
       title: '新订单通知',
-      message: `您有一个新订单 #${order._id}，请及时处理`,
+      msg: `您有一个新订单 #${order._id}，请及时处理`,
       orderId: order._id
     })
 
@@ -245,55 +245,74 @@ router.put('/updateStatus', async (req, res) => {
       return res.status(404).json({ code: 404, msg: '订单不存在' })
     }
 
-    // 权限检查：只有买家或卖家可操作，具体逻辑视业务而定
-    // 例如付款只有买家可操作，发货只有卖家可操作
+    if (order.status === newStatus) {
+      return res.json({ code: 200, msg: '订单状态无需更新' })
+    }
+
+    if (newStatus === 1 && order.status !== 0) {
+      return res.status(400).json({ code: 400, msg: '订单状态异常，无法付款' })
+    }
+
     if (newStatus === 1 && String(order.buyerId) !== String(userId)) {
       return res.status(403).json({ code: 403, msg: '只有买家可以付款' })
     }
     if (newStatus === 2 && String(order.sellerId) !== String(userId)) {
       return res.status(403).json({ code: 403, msg: '只有卖家可以发货' })
     }
+    if (newStatus === 3 && String(order.buyerId) !== String(userId)) {
+      return res.status(403).json({ code: 403, msg: '只有买家可以确认收货' })
+    }
 
-    // 更新状态和相关字段
     const update = { status: newStatus }
     if (newStatus === 1) {
       const total = Math.round(order.unitPrice * order.quantity * 100) / 100
 
-      // 检查买家余额
       const buyer = await UserModel.findById(order.buyerId)
       if (!buyer || buyer.Balance < total) {
         return res.status(400).json({ code: 400, msg: '余额不足' })
       }
 
-      // 扣买家余额，加卖家余额
+      // 余额支付：扣买家，钱冻结在平台（暂不给卖家）
       await UserModel.findByIdAndUpdate(order.buyerId, { $inc: { Balance: -total } })
-      await UserModel.findByIdAndUpdate(order.sellerId, { $inc: { Balance: total } })
 
       update.payTime = new Date()
       update.expireAt = null
     }
-    // 其他状态可添加相应逻辑
+
+    // 买家确认收货 → 钱打给卖家
+    if (newStatus === 3) {
+      const total = Math.round(order.unitPrice * order.quantity * 100) / 100
+      await UserModel.findByIdAndUpdate(order.sellerId, { $inc: { Balance: total } })
+    }
 
     const updatedOrder = await OrderModel.findByIdAndUpdate(orderId, update, { new: true })
 
-    // 付款后通知卖家
     if (newStatus === 1) {
       await NotificationModel.create({
         userId: order.sellerId,
         type: 'order_paid',
         title: '订单已付款',
-        message: `订单 #${orderId} 已完成付款，请尽快发货`,
+        msg: `订单 #${orderId} 已完成付款，请尽快发货`,
         orderId
       })
     }
 
-    // 发货后通知买家
     if (newStatus === 2) {
       await NotificationModel.create({
         userId: order.buyerId,
         type: 'order_shipped',
         title: '订单已发货',
-        message: `您的订单 #${orderId} 已发货，请注意查收`,
+        msg: `您的订单 #${orderId} 已发货，请注意查收`,
+        orderId
+      })
+    }
+
+    if (newStatus === 3) {
+      await NotificationModel.create({
+        userId: order.sellerId,
+        type: 'order_paid',
+        title: '订单已完成',
+        msg: `订单 #${orderId} 已确认收货，款项已转入您的余额`,
         orderId
       })
     }
@@ -355,10 +374,9 @@ router.post('/cancel', async (req, res) => {
     // 卖家取消已支付的订单 → 退款中；其余情况 → 已取消
     if (isSeller && order.status === 1) {
       order.status = 5
-      // 退还余额：退买家、扣卖家
       const total = Math.round(order.unitPrice * order.quantity * 100) / 100
+      // 钱还在平台冻结，退给买家即可
       await UserModel.findByIdAndUpdate(order.buyerId, { $inc: { Balance: total } })
-      await UserModel.findByIdAndUpdate(order.sellerId, { $inc: { Balance: -total } })
     } else {
       order.status = 4
     }
@@ -373,7 +391,7 @@ router.post('/cancel', async (req, res) => {
         userId: order.buyerId,
         type: 'order_cancelled',
         title: '订单已取消',
-        message: `卖家已取消订单 #${order._id}${reason ? '，原因：' + reason : ''}`,
+        msg: `卖家已取消订单 #${order._id}${reason ? '，原因：' + reason : ''}`,
         orderId: order._id
       })
     }
@@ -384,7 +402,7 @@ router.post('/cancel', async (req, res) => {
         userId: order.sellerId,
         type: 'order_refunded',
         title: '买家取消订单',
-        message: `买家已取消订单 #${order._id}${reason ? '，原因：' + reason : ''}`,
+        msg: `买家已取消订单 #${order._id}${reason ? '，原因：' + reason : ''}`,
         orderId: order._id
       })
     }
@@ -439,17 +457,16 @@ router.post('/refund', async (req, res) => {
     order.cancelBy = 'buyer'
     await order.save()
 
-    // 退还余额：退买家、扣卖家
+    // 钱还在平台冻结，退给买家即可
     const total = Math.round(order.unitPrice * order.quantity * 100) / 100
     await UserModel.findByIdAndUpdate(order.buyerId, { $inc: { Balance: total } })
-    await UserModel.findByIdAndUpdate(order.sellerId, { $inc: { Balance: -total } })
 
     // 退款 → 通知卖家
     await NotificationModel.create({
       userId: order.sellerId,
       type: 'order_refunded',
       title: '买家申请退款',
-      message: `买家已申请退款 #${order._id}${reason ? '，原因：' + reason : ''}`,
+      msg: `买家已申请退款 #${order._id}${reason ? '，原因：' + reason : ''}`,
       orderId: order._id
     })
 

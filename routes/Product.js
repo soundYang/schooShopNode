@@ -6,7 +6,7 @@ const express = require('express')
 const multer = require('multer')  
 const ProductModel = require('../model/ProductModel.js')
 const router = express.Router()
-const checkTokenMiddleware = require('../middlewares/checkTokenMiddelware.js')
+const checkTokenMiddleware = require('../middlewares/checkTokenMiddleware.js')
 const fs = require('fs').promises  
 const path = require('path')
 
@@ -59,7 +59,7 @@ router.post('/create', checkTokenMiddleware, upload.array('shopImg', 6), async (
       shopActualValue: parseFloat(req.body.shopActualValue),
       shopNum: parseInt(req.body.shopNum),
       shopMsg: req.body.shopMsg,
-      isBlinBox: req.body.isBlinBox === 'true',
+      isBlindBox: req.body.isBlindBox === 'true',
       shopType: shopType,
       publishAddress: publishAddress,
       shopImg: imageUrls, // 存储图片URL数组
@@ -89,17 +89,11 @@ router.post('/create', checkTokenMiddleware, upload.array('shopImg', 6), async (
 // 获取单个商品信息
 router.get('/getPro', async (req,res) => {
   try {
-    // 获取一次商品相当于浏览该商品 浏览次数加1
-    await ProductModel.updateOne({
-      _id: req.query.id
-    }, {
-      $inc: {
-        viewCount: 1
-      }
-    })
-    const data = await ProductModel.findOne({
-      _id: req.query.id
-    })
+    const data = await ProductModel.findOneAndUpdate(
+      { _id: req.query.id },
+      { $inc: { viewCount: 1 } },
+      { returnDocument: 'after' }
+    )
     if(!data) {
       return res.send({
         code:400
@@ -135,17 +129,17 @@ router.get('/getAllPro', async (req, res) => {
       ProductModel.find(query)
         .skip(skip)
         .limit(pageSize)
-        .sort({ careteTime: -1 }), // 推荐按创建时间倒序，让最新商品在前
-      ProductModel.countDocuments(query)  // 获取总记录数
+        .sort({ createTime: -1 }),
+      ProductModel.countDocuments(query)
     ])
 
     res.json({
       code: 200,
       data,
-      total,           // 总记录数
-      page,            // 当前页码
-      pageSize,        // 每页条数
-      totalPages: Math.ceil(total / pageSize) // 总页数
+      total,
+      page,
+      pageSize,
+      totalPages: Math.ceil(total / pageSize)
     })
   } catch (err) {
     res.status(500).json({ code: 500, msg: '服务器错误' })
@@ -170,7 +164,7 @@ router.get('/getUserProducts',checkTokenMiddleware, async (req, res) => {
       ProductModel.find({userId})
         .skip(skip)
         .limit(limit)
-        .sort({ careteTime: -1 }), // 推荐按创建时间倒序，让最新商品在前
+        .sort({ createTime: -1 }),
       ProductModel.countDocuments({userId})  // 获取总记录数
     ])
     res.json({
@@ -235,18 +229,13 @@ router.post('/updatePro',checkTokenMiddleware, async (req, res) => {
     if (!_id) {
       return res.status(400).json({ code: 400, msg: '未查询到商品' })
     }
-    
-    /**
-     * 商品信息校验
-     */
+
+    delete updateData.userId
 
     // 执行更新操作，返回更新后的文档
     const updatedProduct = await ProductModel.findByIdAndUpdate(
       _id, 
-      {
-        ...updateData,
-        userId: req.user._id
-      },
+      updateData,
       { 
         returnDocument: 'after', // 返回更新后的文档（替代 { new: true }）
         runValidators: true      // 可选：确保更新符合模型的验证规则
@@ -267,13 +256,12 @@ router.post('/updatePro',checkTokenMiddleware, async (req, res) => {
   }
 })
 
-// 模糊搜索商品
+// 模糊搜索商品（优化：字符级分词，容错性更强）
 router.post('/searchPro', async (req, res) => {
   try {
     const { keyword, page = 1, pageSize = 10 } = req.body
 
-    // 如果没有关键字，返回空数组（或按需处理）
-    if (!keyword) {
+    if (!keyword || !keyword.trim()) {
       return res.json({
         code: 200,
         data: [],
@@ -282,28 +270,34 @@ router.post('/searchPro', async (req, res) => {
       })
     }
 
-    // 创建不区分大小写的正则表达式
-    const regex = new RegExp(keyword, 'i')
+    const trimmedKeyword = keyword.trim()
+    const chars = [...new Set(trimmedKeyword.split(''))]
 
-    // 构建查询条件：在商品名称和商品描述中搜索
-    const query = {
+    // 每个字符只需在 shopName、shopMsg 或 shopType 中任意一处出现即可
+    // 例如搜"手蓝"，可匹配名称含"手"、描述含"蓝"的商品
+    const charConditions = chars.map(char => ({
       $or: [
-        { shopName: { $regex: regex } },
-        { shopMsg: { $regex: regex } }
-      ],
-      shopStatus: 1
+        { shopName: { $regex: char, $options: 'i' } },
+        { shopMsg: { $regex: char, $options: 'i' } },
+        { shopType: { $regex: char, $options: 'i' } }
+      ]
+    }))
+
+    const query = {
+      $and: [
+        { shopStatus: 1 },
+        ...charConditions
+      ]
     }
 
-    // 计算分页
     const skip = (parseInt(page) - 1) * parseInt(pageSize)
     const limit = parseInt(pageSize)
 
-    // 并行查询：获取匹配的商品和总数
     const [products, total] = await Promise.all([
       ProductModel.find(query)
         .skip(skip)
         .limit(limit)
-        .sort({ viewCount: 1 }), // 按浏览量排序
+        .sort({ viewCount: -1, createTime: -1 }),
       ProductModel.countDocuments(query)
     ])
 
@@ -317,43 +311,43 @@ router.post('/searchPro', async (req, res) => {
     })
   } catch (error) {
     console.error(error)
-    res.status(500).send(error)
+    res.status(500).json({ code: 500, msg: '服务器错误' })
   }
 })
 
 // 根据关键字获取商品列表(热门商品, 新鲜好物)
-router.get('/keyProList', async (req, res) => { 
-   try{
+router.get('/keyProList', async (req, res) => {
+  try {
     const { key } = req.query
-    const query = {
-      shopStatus: 1
-    }
-    if(key === 'hot'){
-      query.viewCount = -1 
-    } else if(key === 'new'){
-      query.craeteTime = -1 
-    } else{``
+    const filter = { shopStatus: 1 }
+    let sort = {}
+
+    if (key === 'hot') {
+      sort = { viewCount: -1 }
+    } else if (key === 'new') {
+      sort = { createTime: -1 }
+    } else {
       return res.json({
         code: 400,
         msg: '无效参数'
       })
     }
 
-    const products = await ProductModel.find().sort(query).limit(8)
+    const products = await ProductModel.find(filter).sort(sort).limit(8)
     res.json({
       code: 200,
       data: products
     })
-   } catch (error) {
+  } catch (error) {
     console.error(error)
-    res.status(500).send(error)
+    res.status(500).json({ code: 500, msg: '服务器错误' })
   }
 })
 
 // 根据标签搜索商品（支持分页）
 router.post('/tagSearch', async (req, res) => {
   try {
-    const { tags, page = 1, pageSize = 10 } = req.body.params
+    const { tags, page = 1, pageSize = 10 } = req.body.params || req.body
     // 如果没有提供标签，返回空数组（或可按需求返回所有商品）
 
     if (!tags || (Array.isArray(tags) && tags.length === 0)) {
@@ -408,20 +402,6 @@ router.post('/tagSearch', async (req, res) => {
     console.error('标签搜索失败：', error)
     res.status(500).json({ code: 500, msg: '服务器错误' })
   }
-})
-
-/**
- * 盲盒
- * 价格随机
- * 价格数据 [0.99 6.99 9.99 19.9 39.9 69.9]
- * 然后从库中抽取对应价格的上下浮动0.5 ~ 1.5倍的价格的随机商品（随机商品用户上传时可以选择，即isBlindBox为true时为可作为盲盒商品 ）10件，再从中抽取一个商品，作为盲盒商品
- * 用户的model中添加字段,盲盒商品 对象 里面是对应的随机价格和具体商品id 总共四条数据
- * 抽取到的商品库存会先减一
- * 每天八点二十，盲盒会自动刷新
- * 刷新时 如果盲盒的商品没有购买，则会将库存还原，即加一
- */
-// 获取盲盒商品
-router.get('/blindBox', async (req, res) => { 
 })
 
 module.exports = router

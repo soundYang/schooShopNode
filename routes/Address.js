@@ -3,7 +3,7 @@ const router = express.Router()
 const UserModel = require('../model/UserModel')
 const AddressModel = require('../model/AddressModel')
 const OrderModel = require('../model/OrderModel')
-const checkTokenMiddleware = require('../middlewares/checkTokenMiddelware')
+const checkTokenMiddleware = require('../middlewares/checkTokenMiddleware')
 const { maskAddressesPhone } = require('../ToolFunction/maskPhone')
 
 router.use(checkTokenMiddleware)

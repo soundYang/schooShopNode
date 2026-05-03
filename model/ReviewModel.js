@@ -35,7 +35,7 @@ const ReviewSchema = new mongoose.Schema({
   },
   time:{
     type: Date,
-    default: new Date()  // 时间
+    default: Date.now
   }
 })
 

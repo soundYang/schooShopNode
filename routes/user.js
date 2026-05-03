@@ -5,7 +5,7 @@ const md5 = require('md5')
 const { secret } = require('../config/index')
 const jwt = require('jsonwebtoken')
 
-const checkTokenMiddleware = require('../middlewares/checkTokenMiddelware')
+const checkTokenMiddleware = require('../middlewares/checkTokenMiddleware')
 
 const { loginLog } = require('../ToolFunction/loginLog')  // 登录日志
 const { logRegister } = require('../ToolFunction/loggerLog') // 注册日志
@@ -58,9 +58,12 @@ router.post('/userInfo', async (req,res) => {
 router.post('/login', async (req,res) => { 
   const { UserName, PassWord } = req.body
 
-  /**
-   * 数据校验
-   */
+  if (!UserName || !PassWord) {
+    return res.json({
+      code: 400,
+      msg: '用户名和密码不能为空'
+    })
+  }
   
   try {
     const data = await UserModel.findOne({
@@ -117,20 +120,17 @@ router.post('/login', async (req,res) => {
 
 // 更新用户信息
 /**
- * 仅仅支持用户密码, 用户昵称
+ * 支持修改密码、用户名、头像
  */
 router.post('/updateUser',checkTokenMiddleware, async (req, res) => {
-  console.log(req.body);
-   
-  const updateInfo = {
-    ...req.body,
-    [Symbol.iterator]: function * () {
-      yield* Object.keys(updateInfo)
-    }
-  }
+  const safeBody = { ...req.body }
+  if (safeBody.PassWord) safeBody.PassWord = '***'
+  console.log('updateUser body:', safeBody)
 
-  for(const key of updateInfo){
-    if(key !== 'PassWord' || key !== 'UserName'){
+  const allowedFields = ['PassWord', 'UserName', 'Avatar']
+  const updateKeys = Object.keys(req.body)
+  for (const key of updateKeys) {
+    if (!allowedFields.includes(key)) {
       return res.json({
         code: 400,
         msg: '权限不足'
@@ -138,18 +138,11 @@ router.post('/updateUser',checkTokenMiddleware, async (req, res) => {
     }
   }
 
-  
-  const _id = req.user._id  
+  const _id = req.user._id
   try {
-    /**
-     * 头像审核 
-     */
+    if (req.body.PassWord) req.body.PassWord = md5(req.body.PassWord)
 
-    if(req.body.PassWord) req.body.PassWord = md5(req.body.PassWord)
-
-    const data = await UserModel.findByIdAndUpdate(_id, {
-      ...req.body
-    })
+    const data = await UserModel.findByIdAndUpdate(_id, req.body)
     if (!data) {
       return res.send({
         code: 400,
@@ -166,11 +159,11 @@ router.post('/updateUser',checkTokenMiddleware, async (req, res) => {
 })
 
 // 用户密码是否正确
-router.get('/pswGetInfo', checkTokenMiddleware, async (req, res) => { 
+router.post('/pswGetInfo', checkTokenMiddleware, async (req, res) => {
   try {
     const data = await UserModel.findOne({
       _id: req.user._id,
-      PassWord: md5(req.query.PassWord)
+      PassWord: md5(req.body.PassWord)
     })
     if (!data) {
       return res.send({
@@ -259,13 +252,14 @@ router.get('/checkUser', checkTokenMiddleware, async (req, res) => {
       res.send({
         code: 400,
         data:{
-          isExist: true,
+          isExist: false,
           msg: '用户不存在'
         }
       })
     }
   } catch (err) {
-    res.status(500).send(err)
+    console.error(err)
+    res.status(500).json({ code: 500, msg: '服务器错误' })
   }
 })
 module.exports = router

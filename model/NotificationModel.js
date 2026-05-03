@@ -3,8 +3,7 @@ const mongoose = require('mongoose')
 const NotificationSchema = new mongoose.Schema({
   userId: {
     type: String,
-    required: true,
-    index: true
+    required: true
   },
   type: {
     type: String,
@@ -15,21 +14,21 @@ const NotificationSchema = new mongoose.Schema({
     type: String,
     required: true
   },
-  message: {
+  msg: {
     type: String,
     required: true
   },
   orderId: {
-    type: String,
-    required: true
+    type: String
   },
   isRead: {
     type: Boolean,
-    default: false,
-    index: true
+    default: false
   }
 }, {
   timestamps: true
 })
+
+NotificationSchema.index({ userId: 1, isRead: 1, createdAt: -1 })
 
 module.exports = mongoose.model('Notification', NotificationSchema)

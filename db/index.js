@@ -6,6 +6,8 @@ module.exports = (success, error) => {
   }
 
   const mongoose = require('mongoose')
+  const timezonePlugin = require('../plugin/timezonePlugin')
+  mongoose.plugin(timezonePlugin)
   const {DBHOST,DBPORT,DBNAME} = require('../config/index')
 
   mongoose.connect(`mongodb://${DBHOST}:${DBPORT}/${DBNAME}`)

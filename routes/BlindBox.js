@@ -1,11 +1,11 @@
-const router = require('express').Router()
-const { generateUserBlindBoxes } = require('../services/blindBoxService')
+﻿const router = require('express').Router()
+const { generateUserBlindBoxes, checkAndUpdateBlindBoxState } = require('../services/blindBoxService')
 const BlindBoxRecord = require('../model/BlindBoxRecordModel')
 const Product = require('../model/ProductModel')
 const UserModel = require('../model/UserModel')
 const OrderModel = require('../model/OrderModel')
 const NotificationModel = require('../model/NotificationModel')
-const checkTokenMiddleware = require('../middlewares/checkTokenMiddelware')
+const checkTokenMiddleware = require('../middlewares/checkTokenMiddleware')
 
 // 获取今日盲盒
 router.get('/today', checkTokenMiddleware, async (req, res) => {
@@ -13,12 +13,23 @@ router.get('/today', checkTokenMiddleware, async (req, res) => {
   const today = new Date().toISOString().split('T')[0]
 
   let record = await BlindBoxRecord.findOne({ userId, date: today })
+
   if (!record) {
+    const state = await checkAndUpdateBlindBoxState()
+    if (!state.open) {
+      return res.json({
+        code: 200,
+        open: false,
+        count: state.count,
+        data: []
+      })
+    }
+
     try {
       record = await generateUserBlindBoxes(userId, today)
     } catch (err) {
       console.log(err)
-      return res.status(500).json({ code: 500, msg: '生成盲盒失败' })
+      return res.status(500).json({ code: 500, msg: err.message || '生成盲盒失败' })
     }
   }
 
@@ -46,6 +57,11 @@ router.post('/buy', checkTokenMiddleware, async (req, res) => {
     return res.status(400).json({ code: 400, msg: '请填写收货地址' })
   }
 
+  const state = await checkAndUpdateBlindBoxState()
+  if (!state.open) {
+    return res.status(400).json({ code: 400, msg: '盲盒已关闭' })
+  }
+
   const record = await BlindBoxRecord.findOne({ userId, date: today })
   if (!record) {
     return res.status(404).json({ code: 404, msg: '今日盲盒不存在' })
@@ -70,9 +86,8 @@ router.post('/buy', checkTokenMiddleware, async (req, res) => {
   }
 
   await UserModel.findByIdAndUpdate(userId, { $inc: { Balance: -total } })
-  await UserModel.findByIdAndUpdate(product.userId, { $inc: { Balance: total } })
 
-  // 创建已支付订单
+  // 创建已支付订单（钱冻结在平台，卖家等确认收货后到账）
   const order = await OrderModel.create({
     buyerId: userId,
     sellerId: product.userId,
@@ -98,7 +113,7 @@ router.post('/buy', checkTokenMiddleware, async (req, res) => {
     userId: product.userId,
     type: 'order_paid',
     title: '盲盒已售出',
-    message: `您的盲盒商品已被购买，订单 #${order._id}`,
+    msg: `您的盲盒商品已被购买，订单 #${order._id}`,
     orderId: order._id
   })
 
@@ -180,8 +195,7 @@ router.get('/history', checkTokenMiddleware, async (req, res) => {
     BlindBoxRecord.countDocuments({ userId })
   ])
 
-  const history = []
-  for (const record of records) {
+  const history = records.reduce((acc, record) => {
     const purchasedBoxes = record.boxes
       .filter(box => box.status === 1)
       .map(box => ({
@@ -194,9 +208,10 @@ router.get('/history', checkTokenMiddleware, async (req, res) => {
         purchasedAt: box.purchasedAt
       }))
     if (purchasedBoxes.length > 0) {
-      history.push({ date: record.date, boxes: purchasedBoxes })
+      acc.push({ date: record.date, boxes: purchasedBoxes })
     }
-  }
+    return acc
+  }, [])
 
   res.json({
     code: 200,

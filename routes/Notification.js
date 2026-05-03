@@ -1,7 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const NotificationModel = require('../model/NotificationModel')
-const checkTokenMiddleware = require('../middlewares/checkTokenMiddelware')
+const checkTokenMiddleware = require('../middlewares/checkTokenMiddleware')
 
 router.use(checkTokenMiddleware)
 

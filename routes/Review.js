@@ -4,7 +4,7 @@ const ReviewModel = require('../model/ReviewModel')
 const ProductModel = require('../model/ProductModel')
 const UserModel = require('../model/UserModel')
 const NotificationModel = require('../model/NotificationModel')
-const checkTokenMiddleware = require('../middlewares/checkTokenMiddelware')
+const checkTokenMiddleware = require('../middlewares/checkTokenMiddleware')
 
 router.use(checkTokenMiddleware)
 
@@ -61,7 +61,7 @@ router.post('/add', async (req, res) => {
       userId: sellerId,
       type: 'new_review',
       title: '收到新评价',
-      message: `${userName} 评价了您的商品：${content}`,
+      msg: `${userName} 评价了您的商品：${content}`,
       orderId
     })
 
@@ -119,9 +119,24 @@ router.get('/list', async (req, res) => {
       ReviewModel.countDocuments(query)
     ])
 
+    const userIds = [...new Set(reviews.map(r => r.userId))]
+    const users = await UserModel.find(
+      { _id: { $in: userIds } },
+      '_id Avatar'
+    )
+    const userAvatarMap = {}
+    users.forEach(u => {
+      userAvatarMap[u._id.toString()] = u.Avatar || ''
+    })
+    const enrichedReviews = reviews.map(r => {
+      const review = r.toObject()
+      review.Avatar = userAvatarMap[r.userId] || review.Avatar || ''
+      return review
+    })
+
     res.json({
       code: 200,
-      data: reviews,
+      data: enrichedReviews,
       total,
       page: parseInt(page),
       pageSize: parseInt(pageSize),

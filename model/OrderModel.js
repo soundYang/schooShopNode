@@ -106,6 +106,10 @@ OrderSchema.index(
     }
 )
 
+OrderSchema.index({ buyerId: 1, status: 1, orderTime: -1 })
+OrderSchema.index({ sellerId: 1, status: 1, orderTime: -1 })
+OrderSchema.index({ productId: 1 })
+
 // 确保虚拟字段在 JSON 输出中包含
 OrderSchema.set('toJSON', { virtuals: true })
 OrderSchema.set('toObject', { virtuals: true })
