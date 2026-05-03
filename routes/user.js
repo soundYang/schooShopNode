@@ -12,6 +12,8 @@ const logService = require('../ToolFunction/logService')
 const { maskPhone, maskAddressesPhone } = require('../ToolFunction/maskPhone')
 const captchaStore = require('../ToolFunction/captchaStore')
 
+const { contentModeration } = require('../middlewares/contentModeration')
+
 const ALLOWED_REGISTER_FIELDS = ['UserName', 'PassWord', 'PhoneNumber', 'StudentId', 'Avatar']
 
 // 注册接口限流：每小时每 IP 最多 5 次注册
@@ -23,7 +25,7 @@ const registerLimiter = rateLimit({
   legacyHeaders: false
 })
 
-router.post('/userInfo', registerLimiter, async (req,res) => {
+router.post('/userInfo', registerLimiter, contentModeration({ checkFields: ['UserName'] }), async (req,res) => {
  try {
     const { captchaId, captchaText, ...userData } = req.body
 
@@ -138,7 +140,7 @@ router.post('/login', async (req,res) => {
 }) 
 
 // 更新用户信息（含旧密码验证）
-router.post('/updateUser', checkTokenMiddleware, async (req, res) => {
+router.post('/updateUser', checkTokenMiddleware, contentModeration({ checkFields: ['UserName'] }), async (req, res) => {
   const { oldPassWord, ...fieldsToUpdate } = req.body
 
   // 如果修改密码，必须验证旧密码

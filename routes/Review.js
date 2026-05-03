@@ -1,15 +1,17 @@
 const express = require('express')
 const router = express.Router()
 const ReviewModel = require('../model/ReviewModel')
+const ReviewQueueModel = require('../model/ReviewQueueModel')
 const ProductModel = require('../model/ProductModel')
 const UserModel = require('../model/UserModel')
 const NotificationModel = require('../model/NotificationModel')
 const checkTokenMiddleware = require('../middlewares/checkTokenMiddleware')
+const { contentModeration } = require('../middlewares/contentModeration')
 
 router.use(checkTokenMiddleware)
 
 // 添加评论
-router.post('/add', async (req, res) => {
+router.post('/add', contentModeration({ checkFields: ['content'] }), async (req, res) => {
   try {
     const { productId, sellerId, orderId, content, proPhoto, avatar } = req.body
     const userId = req.user._id
@@ -18,10 +20,6 @@ router.post('/add', async (req, res) => {
     if (!productId || !sellerId || !orderId || !content) {
       return res.status(400).json({ code: 400, msg: '商品ID、卖家ID、订单ID和评论内容不能为空' })
     }
-
-    /**
-     * 审核评论和图片
-     */
 
     // 检查是否已评价过该订单
     const existing = await ReviewModel.findOne({ userId, orderId })
@@ -56,6 +54,25 @@ router.post('/add', async (req, res) => {
       Avatar: avatar || ''
     })
 
+    // 如果评论包含图片，创建审核队列记录
+    if (review && proPhoto) {
+      setImmediate(async () => {
+        try {
+          await ReviewQueueModel.create({
+            targetType: 'review',
+            targetId: review._id,
+            content: content,
+            images: [proPhoto],
+            reason: '评价包含图片，需管理员审核',
+            status: 'pending',
+            submittedBy: userId
+          })
+        } catch (e) {
+          console.error('创建评论审核记录失败:', e)
+        }
+      })
+    }
+
     // 通知卖家
     await NotificationModel.create({
       userId: sellerId,
@@ -65,7 +82,7 @@ router.post('/add', async (req, res) => {
       orderId
     })
 
-    res.json({ code: 200, data: review, msg: '评论成功' })
+    res.json({ code: 200, data: review, msg: proPhoto ? '评论成功，图片待管理员审核' : '评论成功' })
   } catch (err) {
     console.error(err)
     res.status(500).json({ code: 500, msg: '服务器错误' })

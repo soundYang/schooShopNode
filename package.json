@@ -6,6 +6,7 @@
     "start": "nodemon ./bin/www"
   },
   "dependencies": {
+    "@tensorflow/tfjs-node": "^4.22.0",
     "axios": "^1.16.0",
     "bcrypt": "^6.0.0",
     "cookie-parser": "~1.4.4",
@@ -23,6 +24,8 @@
     "morgan": "~1.9.1",
     "multer": "^2.1.1",
     "node-cron": "^3.0.3",
+    "nsfwjs": "^4.3.0",
+    "sensitive-word-filtering": "^2.1.7",
     "svg-captcha": "^1.4.0"
   }
 }

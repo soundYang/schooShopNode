@@ -5,8 +5,11 @@
 const express = require('express')
 const multer = require('multer')  
 const ProductModel = require('../model/ProductModel.js')
+const ReviewQueueModel = require('../model/ReviewQueueModel')
 const router = express.Router()
 const checkTokenMiddleware = require('../middlewares/checkTokenMiddleware.js')
+const { contentModeration } = require('../middlewares/contentModeration')
+const { imageModeration } = require('../middlewares/imageModeration')
 const fs = require('fs').promises  
 const path = require('path')
 
@@ -37,14 +40,17 @@ const upload = multer({
 })
 
 // 创建商品信息（支持文件上传）
-router.post('/create', checkTokenMiddleware, upload.array('shopImg', 6), async (req, res) => {
+router.post('/create',
+  checkTokenMiddleware,
+  upload.array('shopImg', 6),
+  contentModeration({ checkFields: ['shopName', 'shopMsg'] }),
+  imageModeration(),
+  async (req, res) => {
   try {
     const currentUserId = req.user._id
     
     // 处理上传的图片文件
     const imageUrls = req.files ? req.files.map(file => {
-      // 这里应该返回图片的访问URL，根据你的实际配置
-      // 如果是本地存储，返回文件路径；如果是云存储，返回云存储URL
       return `/uploads/${file.filename}`
     }) : []
     
@@ -62,17 +68,36 @@ router.post('/create', checkTokenMiddleware, upload.array('shopImg', 6), async (
       isBlindBox: req.body.isBlindBox === 'true',
       shopType: shopType,
       publishAddress: publishAddress,
-      shopImg: imageUrls, // 存储图片URL数组
+      shopImg: imageUrls,
       userId: currentUserId,
       shopStatus: 1
     }
     
     const data = await ProductModel.create(productData)
     
+    // 如果包含图片，创建审核队列记录（管理员人工审核图片）
+    if (data && imageUrls.length > 0) {
+      setImmediate(async () => {
+        try {
+          await ReviewQueueModel.create({
+            targetType: 'product',
+            targetId: data._id,
+            content: `${req.body.shopName} - ${(req.body.shopMsg || '').substring(0, 100)}`,
+            images: imageUrls,
+            reason: '包含上传图片，需管理员审核',
+            status: 'pending',
+            submittedBy: currentUserId
+          })
+        } catch (e) {
+          console.error('创建商品审核记录失败:', e)
+        }
+      })
+    }
+    
     if (data) {
       res.send({
         code: 200,
-        msg: '创建成功'
+        msg: imageUrls.length > 0 ? '创建成功，图片待管理员审核' : '创建成功'
       })
     } else {
       res.send({
@@ -221,7 +246,7 @@ router.delete('/delPro', checkTokenMiddleware, async (req, res) => {
 })
 
 // 更新商品信息
-router.post('/updatePro',checkTokenMiddleware, async (req, res) => {
+router.post('/updatePro', checkTokenMiddleware, contentModeration({ checkFields: ['shopName', 'shopMsg'] }), async (req, res) => {
   try {
     const { _id, ...updateData } = req.body
     

@@ -7,7 +7,8 @@ const AdminModel = require('../model/AdminModel.js')
 const UserModel = require('../model/UserModel.js')
 const ProductModel = require('../model/ProductModel.js')
 const OrderModel = require('../model/OrderModel.js')
-const ReviewModel = require('../model/ReviewModel.js')
+const ReviewModel = require('../model/ReviewModel.js');
+const ReviewQueueModel = require('../model/ReviewQueueModel.js');
 const LabelModel = require('../model/LabelModel.js')
 const BlindBoxRecordModel = require('../model/BlindBoxRecordModel.js')
 const NotificationModel = require('../model/NotificationModel.js')
@@ -696,6 +697,105 @@ router.put('/profile', checkAdminMiddleware, async (req, res) => {
     res.json({ code: 200, msg: '个人信息已更新', data: updatedAdmin })
   } catch (err) {
     res.status(500).json({ code: 500, msg: '服务器错误' })
+  }
+})
+
+// ==================== 审核队列管理 ====================
+
+router.get('/review-queue', async (req, res) => {
+  try {
+    const { page = 1, pageSize = 20, status, targetType } = req.query
+    const query = {}
+
+    if (status) query.status = status
+    if (targetType) query.targetType = targetType
+
+    const [list, total] = await Promise.all([
+      ReviewQueueModel.find(query)
+        .sort({ createdAt: -1 })
+        .skip((Number(page) - 1) * Number(pageSize))
+        .limit(Number(pageSize)),
+      ReviewQueueModel.countDocuments(query)
+    ])
+
+    const enriched = await Promise.all(list.map(async (item) => {
+      const obj = item.toObject()
+      if (item.targetType === 'product') {
+        const product = await ProductModel.findById(item.targetId).select('shopName shopPrice shopStatus')
+        obj.targetInfo = product || null
+      } else if (item.targetType === 'review') {
+        const review = await ReviewModel.findById(item.targetId).select('content userName')
+        obj.targetInfo = review || null
+      }
+      return obj
+    }))
+
+    res.json({ code: 200, data: { list: enriched, total } })
+  } catch (err) {
+    res.status(500).json({ code: 500, msg: '服务器错误', error: err.message })
+  }
+})
+
+router.get('/review-queue/stats', async (req, res) => {
+  try {
+    const [pending, approved, rejected] = await Promise.all([
+      ReviewQueueModel.countDocuments({ status: 'pending' }),
+      ReviewQueueModel.countDocuments({ status: 'approved' }),
+      ReviewQueueModel.countDocuments({ status: 'rejected' })
+    ])
+
+    res.json({ code: 200, data: { pending, approved, rejected } })
+  } catch (err) {
+    res.status(500).json({ code: 500, msg: '服务器错误', error: err.message })
+  }
+})
+
+router.put('/review-queue/:id/approve', async (req, res) => {
+  try {
+    const entry = await ReviewQueueModel.findById(req.params.id)
+    if (!entry) {
+      return res.status(404).json({ code: 404, msg: '审核记录不存在' })
+    }
+
+    entry.status = 'approved'
+    entry.reviewedBy = req.admin._id
+    entry.reviewedAt = new Date()
+    await entry.save()
+
+    logService.admin(req.admin._id, req.admin.username, '审核通过', `${entry.targetType === 'product' ? '商品' : '评价'}审核通过, ID: ${entry.targetId}`, req.ip)
+
+    res.json({ code: 200, msg: '审核通过' })
+  } catch (err) {
+    res.status(500).json({ code: 500, msg: '服务器错误', error: err.message })
+  }
+})
+
+router.put('/review-queue/:id/reject', async (req, res) => {
+  try {
+    const { reason } = req.body
+    const entry = await ReviewQueueModel.findById(req.params.id)
+    if (!entry) {
+      return res.status(404).json({ code: 404, msg: '审核记录不存在' })
+    }
+
+    entry.status = 'rejected'
+    entry.reviewedBy = req.admin._id
+    entry.reviewedAt = new Date()
+    entry.rejectReason = reason || '管理员拒绝'
+    await entry.save()
+
+    // 拒绝后删除对应内容
+    if (entry.targetType === 'product') {
+      await ProductModel.findByIdAndUpdate(entry.targetId, { shopStatus: 3 })
+      logService.admin(req.admin._id, req.admin.username, '审核拒绝-删除商品', `商品ID: ${entry.targetId}, 理由: ${reason}`, req.ip)
+    } else if (entry.targetType === 'review') {
+      await ReviewModel.findByIdAndDelete(entry.targetId)
+      logService.admin(req.admin._id, req.admin.username, '审核拒绝-删除评价', `评价ID: ${entry.targetId}, 理由: ${reason}`, req.ip)
+    }
+
+    res.json({ code: 200, msg: '已拒绝并删除对应内容' })
+  } catch (err) {
+    res.status(500).json({ code: 500, msg: '服务器错误', error: err.message })
   }
 })
 
