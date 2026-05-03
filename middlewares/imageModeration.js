@@ -1,7 +1,8 @@
-const tf = require('@tensorflow/tfjs-node')
+const tf = require('@tensorflow/tfjs')
 const nsfwjs = require('nsfwjs')
 const fs = require('fs')
 const path = require('path')
+const sharp = require('sharp')
 
 let model = null
 
@@ -14,8 +15,11 @@ async function getModel() {
 
 async function classifyImage(filePath) {
   const m = await getModel()
-  const buffer = fs.readFileSync(filePath)
-  const image = tf.node.decodeImage(buffer, 3)
+  const { data, info } = await sharp(filePath)
+    .flatten({ background: { r: 255, g: 255, b: 255 } })
+    .raw()
+    .toBuffer({ resolveWithObject: true })
+  const image = tf.tensor3d(new Uint8Array(data), [info.height, info.width, info.channels])
   try {
     const predictions = await m.classify(image)
     return predictions
