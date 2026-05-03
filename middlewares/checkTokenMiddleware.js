@@ -16,9 +16,15 @@ const checkTokenMiddleware = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, secret)
-    const user = await UserModel.findById(decoded._id).select('tokenVersion')
+    const user = await UserModel.findById(decoded._id).select('tokenVersion status')
     
-    if (!user || user.tokenVersion !== decoded.version) {
+    if (!user) {
+      return res.status(401).json({ code: 401, msg: '用户不存在' })
+    }
+    if (user.status === 0) {
+      return res.status(403).json({ code: 403, msg: '账号已被禁用' })
+    }
+    if (user.tokenVersion !== decoded.version) {
       return res.status(401).json({ code: 401, msg: '账号已在其他设备登录，请重新登录' })
     }
     req.user = decoded

@@ -4,34 +4,55 @@ const router = express.Router()
 const md5 = require('md5')
 const { secret } = require('../config/index')
 const jwt = require('jsonwebtoken')
+const rateLimit = require('express-rate-limit')
 
 const checkTokenMiddleware = require('../middlewares/checkTokenMiddleware')
 
-const { loginLog } = require('../ToolFunction/loginLog')  // 登录日志
-const { logRegister } = require('../ToolFunction/loggerLog') // 注册日志
+const logService = require('../ToolFunction/logService')
 const { maskPhone, maskAddressesPhone } = require('../ToolFunction/maskPhone')
+const captchaStore = require('../ToolFunction/captchaStore')
 
-// 创建用户
-router.post('/userInfo', async (req,res) => {
+const ALLOWED_REGISTER_FIELDS = ['UserName', 'PassWord', 'PhoneNumber', 'StudentId', 'Avatar']
+
+// 注册接口限流：每小时每 IP 最多 5 次注册
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  message: { code: 429, msg: '注册过于频繁，请稍后再试' },
+  standardHeaders: true,
+  legacyHeaders: false
+})
+
+router.post('/userInfo', registerLimiter, async (req,res) => {
  try {
-    
-    /**
-     * 数据校验
-     */
-    const newUser = await UserModel.create({
-      ...req.body,
-      PassWord:md5(req.body.PassWord)
-    })
+    const { captchaId, captchaText, ...userData } = req.body
 
-    // 异步记录注册日志（不阻塞响应）
+    if (!captchaId || !captchaText) {
+      return res.status(400).json({ code: 400, msg: '请完成图形验证码' })
+    }
+    if (!captchaStore.verify(captchaId, captchaText)) {
+      return res.status(400).json({ code: 400, msg: '验证码错误或已过期' })
+    }
+
+    // 字段白名单过滤，防止 Mass Assignment 攻击
+    const safeData = {}
+    for (const key of ALLOWED_REGISTER_FIELDS) {
+      if (userData[key] !== undefined) {
+        safeData[key] = userData[key]
+      }
+    }
+    safeData.PassWord = md5(safeData.PassWord || userData.PassWord)
+
+    const newUser = await UserModel.create(safeData)
+
     setImmediate(() => {
-      logRegister(
+      logService.register(
         newUser._id,
         newUser.UserName,
         newUser.PhoneNumber,
         req.ip,
         req.headers['user-agent']
-      ).catch(err => console.error('注册日志写入失败:', err))
+      )
     })
 
     res.json({
@@ -107,9 +128,7 @@ router.post('/login', async (req,res) => {
       msg: '登陆成功'
     })
     setImmediate(() => {
-      loginLog(data._id, req.ip, req.headers['user-agent']).catch(err => {
-        console.error('日志记录失败:', err) // 仅记录，不影响主流程
-      })
+      logService.login(data._id, data.UserName, req.ip, req.headers['user-agent'], true)
     })
   } catch (error) {
     console.log(error)
@@ -118,41 +137,38 @@ router.post('/login', async (req,res) => {
   }
 }) 
 
-// 更新用户信息
-/**
- * 支持修改密码、用户名、头像
- */
-router.post('/updateUser',checkTokenMiddleware, async (req, res) => {
-  const safeBody = { ...req.body }
-  if (safeBody.PassWord) safeBody.PassWord = '***'
-  console.log('updateUser body:', safeBody)
+// 更新用户信息（含旧密码验证）
+router.post('/updateUser', checkTokenMiddleware, async (req, res) => {
+  const { oldPassWord, ...fieldsToUpdate } = req.body
+
+  // 如果修改密码，必须验证旧密码
+  if (fieldsToUpdate.PassWord) {
+    if (!oldPassWord) {
+      return res.json({ code: 400, msg: '修改密码需提供旧密码' })
+    }
+    const user = await UserModel.findById(req.user._id)
+    if (!user || user.PassWord !== md5(oldPassWord)) {
+      return res.json({ code: 400, msg: '旧密码错误' })
+    }
+  }
 
   const allowedFields = ['PassWord', 'UserName', 'Avatar']
-  const updateKeys = Object.keys(req.body)
+  const updateKeys = Object.keys(fieldsToUpdate)
   for (const key of updateKeys) {
     if (!allowedFields.includes(key)) {
-      return res.json({
-        code: 400,
-        msg: '权限不足'
-      })
+      return res.json({ code: 400, msg: '权限不足' })
     }
   }
 
   const _id = req.user._id
   try {
-    if (req.body.PassWord) req.body.PassWord = md5(req.body.PassWord)
+    if (fieldsToUpdate.PassWord) fieldsToUpdate.PassWord = md5(fieldsToUpdate.PassWord)
 
-    const data = await UserModel.findByIdAndUpdate(_id, req.body)
+    const data = await UserModel.findByIdAndUpdate(_id, fieldsToUpdate)
     if (!data) {
-      return res.send({
-        code: 400,
-        msg: '更新失败'
-      })
+      return res.send({ code: 400, msg: '更新失败' })
     }
-    res.send({
-      code: 200,
-      msg: '更新成功'
-    })
+    res.send({ code: 200, msg: '更新成功' })
   } catch (error) {
     res.status(500).json({ code: 500, msg: '服务器错误' })
   }

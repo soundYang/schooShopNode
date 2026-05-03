@@ -47,6 +47,11 @@ const UserSchema = new mongoose.Schema({
     type: Number,
     default: 0,
     set: v => Math.round(v * 100) / 100
+  },
+  status: {
+    type: Number,
+    enum: [0, 1],
+    default: 1
   }
 })
 

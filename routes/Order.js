@@ -233,61 +233,47 @@ router.get('/blindBox', async (req, res) => {
   }
 })
 
-// 修改订单状态
+// 修改订单状态（使用原子操作防止竞态条件）
 router.put('/updateStatus', async (req, res) => {
   try {
     const { orderId, newStatus } = req.body
     const userId = req.user._id
-    
-    const order = await OrderModel.findById(orderId)
-    
-    if (!order) {
-      return res.status(404).json({ code: 404, msg: '订单不存在' })
+
+    if (!orderId || newStatus === undefined) {
+      return res.status(400).json({ code: 400, msg: '缺少必要参数' })
     }
 
-    if (order.status === newStatus) {
-      return res.json({ code: 200, msg: '订单状态无需更新' })
-    }
+    // 权限校验先做（不依赖订单状态，无竞态问题）
+    let order = null
 
-    if (newStatus === 1 && order.status !== 0) {
-      return res.status(400).json({ code: 400, msg: '订单状态异常，无法付款' })
-    }
-
-    if (newStatus === 1 && String(order.buyerId) !== String(userId)) {
-      return res.status(403).json({ code: 403, msg: '只有买家可以付款' })
-    }
-    if (newStatus === 2 && String(order.sellerId) !== String(userId)) {
-      return res.status(403).json({ code: 403, msg: '只有卖家可以发货' })
-    }
-    if (newStatus === 3 && String(order.buyerId) !== String(userId)) {
-      return res.status(403).json({ code: 403, msg: '只有买家可以确认收货' })
-    }
-
-    const update = { status: newStatus }
     if (newStatus === 1) {
-      const total = Math.round(order.unitPrice * order.quantity * 100) / 100
+      // 支付：原子操作 — 只更新 status=0 的订单，同时检查买家身份
+      order = await OrderModel.findOneAndUpdate(
+        { _id: orderId, status: 0, buyerId: userId },
+        { status: 1, payTime: new Date(), expireAt: null },
+        { new: true }
+      )
+      if (!order) {
+        // 可能是订单不存在、状态不是0、或不是买家
+        const exists = await OrderModel.findById(orderId).select('status buyerId')
+        if (!exists) return res.status(404).json({ code: 404, msg: '订单不存在' })
+        if (String(exists.buyerId) !== String(userId)) return res.status(403).json({ code: 403, msg: '只有买家可以付款' })
+        return res.status(400).json({ code: 400, msg: '订单状态异常或已被支付' })
+      }
 
-      const buyer = await UserModel.findById(order.buyerId)
-      if (!buyer || buyer.Balance < total) {
+      // 原子扣款：只在余额充足时扣减
+      const total = Math.round(order.unitPrice * order.quantity * 100) / 100
+      const deducted = await UserModel.findOneAndUpdate(
+        { _id: userId, Balance: { $gte: total } },
+        { $inc: { Balance: -total } },
+        { new: true }
+      )
+      if (!deducted) {
+        // 余额不足，回滚订单状态
+        await OrderModel.findByIdAndUpdate(orderId, { status: 0, payTime: null, expireAt: null })
         return res.status(400).json({ code: 400, msg: '余额不足' })
       }
 
-      // 余额支付：扣买家，钱冻结在平台（暂不给卖家）
-      await UserModel.findByIdAndUpdate(order.buyerId, { $inc: { Balance: -total } })
-
-      update.payTime = new Date()
-      update.expireAt = null
-    }
-
-    // 买家确认收货 → 钱打给卖家
-    if (newStatus === 3) {
-      const total = Math.round(order.unitPrice * order.quantity * 100) / 100
-      await UserModel.findByIdAndUpdate(order.sellerId, { $inc: { Balance: total } })
-    }
-
-    const updatedOrder = await OrderModel.findByIdAndUpdate(orderId, update, { new: true })
-
-    if (newStatus === 1) {
       await NotificationModel.create({
         userId: order.sellerId,
         type: 'order_paid',
@@ -295,9 +281,24 @@ router.put('/updateStatus', async (req, res) => {
         msg: `订单 #${orderId} 已完成付款，请尽快发货`,
         orderId
       })
+
+      return res.json({ code: 200, data: order })
     }
 
     if (newStatus === 2) {
+      // 发货：原子操作 — 只更新 status=1 的订单，同时检查卖家身份
+      order = await OrderModel.findOneAndUpdate(
+        { _id: orderId, status: 1, sellerId: userId },
+        { status: 2 },
+        { new: true }
+      )
+      if (!order) {
+        const exists = await OrderModel.findById(orderId).select('status sellerId')
+        if (!exists) return res.status(404).json({ code: 404, msg: '订单不存在' })
+        if (String(exists.sellerId) !== String(userId)) return res.status(403).json({ code: 403, msg: '只有卖家可以发货' })
+        return res.status(400).json({ code: 400, msg: '订单状态异常，无法发货' })
+      }
+
       await NotificationModel.create({
         userId: order.buyerId,
         type: 'order_shipped',
@@ -305,9 +306,28 @@ router.put('/updateStatus', async (req, res) => {
         msg: `您的订单 #${orderId} 已发货，请注意查收`,
         orderId
       })
+
+      return res.json({ code: 200, data: order })
     }
 
     if (newStatus === 3) {
+      // 确认收货：原子操作 — 只更新 status=2 的订单，同时检查买家身份
+      order = await OrderModel.findOneAndUpdate(
+        { _id: orderId, status: 2, buyerId: userId },
+        { status: 3 },
+        { new: true }
+      )
+      if (!order) {
+        const exists = await OrderModel.findById(orderId).select('status buyerId')
+        if (!exists) return res.status(404).json({ code: 404, msg: '订单不存在' })
+        if (String(exists.buyerId) !== String(userId)) return res.status(403).json({ code: 403, msg: '只有买家可以确认收货' })
+        return res.status(400).json({ code: 400, msg: '订单状态异常，无法确认收货' })
+      }
+
+      // 钱打给卖家
+      const total = Math.round(order.unitPrice * order.quantity * 100) / 100
+      await UserModel.findByIdAndUpdate(order.sellerId, { $inc: { Balance: total } })
+
       await NotificationModel.create({
         userId: order.sellerId,
         type: 'order_paid',
@@ -315,9 +335,11 @@ router.put('/updateStatus', async (req, res) => {
         msg: `订单 #${orderId} 已确认收货，款项已转入您的余额`,
         orderId
       })
+
+      return res.json({ code: 200, data: order })
     }
 
-    res.json({ code: 200, data: updatedOrder })
+    return res.status(400).json({ code: 400, msg: '无效的订单状态' })
   } catch (err) {
     console.error(err)
     res.status(500).json({ code: 500, msg: '服务器错误' })

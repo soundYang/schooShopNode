@@ -82,7 +82,7 @@ router.post('/create', checkTokenMiddleware, upload.array('shopImg', 6), async (
     }
   } catch (err) {
     console.log(err)
-    res.status(500).json({ code: 500, msg: '服务器错误', error: err.message })
+    res.status(500).json({ code: 500, msg: '服务器错误' })
   }
 })
 
@@ -271,6 +271,10 @@ router.post('/searchPro', async (req, res) => {
     }
 
     const trimmedKeyword = keyword.trim()
+    // 限制搜索关键词长度，防止 ReDoS 攻击
+    if (trimmedKeyword.length > 20) {
+      return res.json({ code: 400, msg: '搜索关键词过长，最多支持20个字符' })
+    }
     const chars = [...new Set(trimmedKeyword.split(''))]
 
     // 每个字符只需在 shopName、shopMsg 或 shopType 中任意一处出现即可

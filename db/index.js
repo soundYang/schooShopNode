@@ -8,9 +8,16 @@ module.exports = (success, error) => {
   const mongoose = require('mongoose')
   const timezonePlugin = require('../plugin/timezonePlugin')
   mongoose.plugin(timezonePlugin)
-  const {DBHOST,DBPORT,DBNAME} = require('../config/index')
+  const {DBHOST,DBPORT,DBNAME,DBUSER,DBPASS} = require('../config/index')
 
-  mongoose.connect(`mongodb://${DBHOST}:${DBPORT}/${DBNAME}`)
+  // 支持 MongoDB 认证
+  let uri = `mongodb://${DBHOST}:${DBPORT}/${DBNAME}`
+  const options = {}
+  if (DBUSER && DBPASS) {
+    uri = `mongodb://${encodeURIComponent(DBUSER)}:${encodeURIComponent(DBPASS)}@${DBHOST}:${DBPORT}/${DBNAME}?authSource=admin`
+  }
+
+  mongoose.connect(uri, options)
 
   mongoose.connection.once('open', success)
 
