@@ -430,7 +430,7 @@ router.get('/labels', async (req, res) => {
   try {
     const labels = await LabelModel.findOne().sort({ _id: -1 })
     if (!labels) {
-      return res.json({ code: 200, data: { mainLabel: [], attributeLabel: [], hotLabel: [] } })
+      return res.json({ code: 200, data: { mainLabel: { name: '主标签', items: [] }, attributeLabel: { name: '属性标签', items: [] }, hotLabel: { name: '热门标签', items: [] } } })
     }
     res.json({ code: 200, data: labels })
   } catch (err) {
@@ -449,13 +449,13 @@ router.put('/labels', async (req, res) => {
       await labels.save()
     } else {
       labels = new LabelModel({
-        mainLabel: mainLabel || [],
-        attributeLabel: attributeLabel || [],
-        hotLabel: hotLabel || []
+        mainLabel: mainLabel || { name: '主标签', items: [] },
+        attributeLabel: attributeLabel || { name: '属性标签', items: [] },
+        hotLabel: hotLabel || { name: '热门标签', items: [] }
       })
       await labels.save()
     }
-    logService.admin(req.admin._id, req.admin.username, '更新标签', `主标签: ${(mainLabel || []).length}个, 属性标签: ${(attributeLabel || []).length}个, 热门标签: ${(hotLabel || []).length}个`, req.ip)
+    logService.admin(req.admin._id, req.admin.username, '更新标签', `主标签: ${(mainLabel?.items || []).length}个, 属性标签: ${(attributeLabel?.items || []).length}个, 热门标签: ${(hotLabel?.items || []).length}个`, req.ip)
     res.json({ code: 200, msg: '标签已更新', data: labels })
   } catch (err) {
     res.status(500).json({ code: 500, msg: '服务器错误', error: err.message })
