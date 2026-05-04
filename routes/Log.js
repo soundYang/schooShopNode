@@ -1,10 +1,42 @@
 const express = require('express')
+const mongoose = require('mongoose')
 const LogModel = require('../model/LogModel')
 const checkAdminMiddleware = require('../middlewares/checkAdminMiddleware')
 const logService = require('../ToolFunction/logService')
 const router = express.Router()
 
 router.use(checkAdminMiddleware)
+
+async function enrichLogs(logs) {
+  const UserModel = mongoose.model('User')
+  const AdminModel = mongoose.model('Admin')
+
+  const userIds = [...new Set(logs.filter(l => l.userId).map(l => l.userId.toString()))]
+  const adminIds = [...new Set(logs.filter(l => l.adminId).map(l => l.adminId.toString()))]
+
+  const [users, admins] = await Promise.all([
+    userIds.length ? UserModel.find({ _id: { $in: userIds } }).select('UserName').lean() : [],
+    adminIds.length ? AdminModel.find({ _id: { $in: adminIds } }).select('username').lean() : []
+  ])
+
+  const userMap = Object.fromEntries(users.map(u => [u._id.toString(), u]))
+  const adminMap = Object.fromEntries(admins.map(a => [a._id.toString(), a]))
+
+  return logs.map(l => {
+    const log = l.toObject ? l.toObject() : l
+    if (log.userId) {
+      const user = userMap[log.userId.toString()]
+      if (user) log.userId = user
+      else log.userId = null
+    }
+    if (log.adminId) {
+      const admin = adminMap[log.adminId.toString()]
+      if (admin) log.adminId = admin
+      else log.adminId = null
+    }
+    return log
+  })
+}
 
 router.get('/list', async (req, res) => {
   try {
@@ -13,8 +45,14 @@ router.get('/list', async (req, res) => {
 
     if (type) query.type = type
     if (level) query.level = level
-    if (adminId) query.adminId = adminId
-    if (userId) query.userId = userId
+    if (adminId) {
+      if (mongoose.Types.ObjectId.isValid(adminId)) query.adminId = new mongoose.Types.ObjectId(adminId)
+      else return res.json({ code: 200, data: { list: [], total: 0 } })
+    }
+    if (userId) {
+      if (mongoose.Types.ObjectId.isValid(userId)) query.userId = new mongoose.Types.ObjectId(userId)
+      else return res.json({ code: 200, data: { list: [], total: 0 } })
+    }
 
     if (keyword) {
       const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -38,19 +76,20 @@ router.get('/list', async (req, res) => {
       }
     }
 
-    const [list, total] = await Promise.all([
+    const [logs, total] = await Promise.all([
       LogModel.find(query)
         .sort({ createdAt: -1 })
         .skip((Number(page) - 1) * Number(pageSize))
         .limit(Number(pageSize))
-        .populate('userId', 'UserName')
-        .populate('adminId', 'username'),
+        .lean(),
       LogModel.countDocuments(query)
     ])
 
-    res.json({ code: 200, data: { list, total } })
+    const enriched = await enrichLogs(logs)
+
+    res.json({ code: 200, data: { list: enriched, total } })
   } catch (err) {
-    res.status(500).json({ code: 500, msg: '获取日志列表失败' })
+    res.status(500).json({ code: 500, msg: '获取日志列表失败', error: err.message })
   }
 })
 
@@ -86,7 +125,7 @@ router.get('/stats', async (req, res) => {
       }
     })
   } catch (err) {
-    res.status(500).json({ code: 500, msg: '获取日志统计失败' })
+    res.status(500).json({ code: 500, msg: '获取日志统计失败', error: err.message })
   }
 })
 
@@ -95,10 +134,11 @@ router.get('/recent', async (req, res) => {
     const logs = await LogModel.find({})
       .sort({ createdAt: -1 })
       .limit(20)
-      .populate('userId', 'UserName')
-      .populate('adminId', 'username')
+      .lean()
 
-    res.json({ code: 200, data: logs })
+    const enriched = await enrichLogs(logs)
+
+    res.json({ code: 200, data: enriched })
   } catch (err) {
     res.status(500).json({ code: 500, msg: '获取最近日志失败' })
   }

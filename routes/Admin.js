@@ -426,13 +426,27 @@ router.delete('/reviews/:id', async (req, res) => {
 
 // ==================== 标签管理 ====================
 
+function normalizeLabel(label) {
+  if (!label) return { name: '', items: [] }
+  if (Array.isArray(label)) return { name: '', items: label }
+  if (Array.isArray(label.items)) return label
+  return { name: label.name || '', items: [] }
+}
+
 router.get('/labels', async (req, res) => {
   try {
     const labels = await LabelModel.findOne().sort({ _id: -1 })
     if (!labels) {
       return res.json({ code: 200, data: { mainLabel: { name: '主标签', items: [] }, attributeLabel: { name: '属性标签', items: [] }, hotLabel: { name: '热门标签', items: [] } } })
     }
-    res.json({ code: 200, data: labels })
+    res.json({
+      code: 200,
+      data: {
+        mainLabel: normalizeLabel(labels.mainLabel),
+        attributeLabel: normalizeLabel(labels.attributeLabel),
+        hotLabel: normalizeLabel(labels.hotLabel)
+      }
+    })
   } catch (err) {
     res.status(500).json({ code: 500, msg: '服务器错误', error: err.message })
   }
@@ -440,22 +454,22 @@ router.get('/labels', async (req, res) => {
 
 router.put('/labels', async (req, res) => {
   try {
-    const { mainLabel, attributeLabel, hotLabel } = req.body
+    let { mainLabel, attributeLabel, hotLabel } = req.body
     let labels = await LabelModel.findOne().sort({ _id: -1 })
     if (labels) {
-      if (mainLabel) labels.mainLabel = mainLabel
-      if (attributeLabel) labels.attributeLabel = attributeLabel
-      if (hotLabel) labels.hotLabel = hotLabel
+      if (mainLabel) labels.mainLabel = normalizeLabel(mainLabel)
+      if (attributeLabel) labels.attributeLabel = normalizeLabel(attributeLabel)
+      if (hotLabel) labels.hotLabel = normalizeLabel(hotLabel)
       await labels.save()
     } else {
       labels = new LabelModel({
-        mainLabel: mainLabel || { name: '主标签', items: [] },
-        attributeLabel: attributeLabel || { name: '属性标签', items: [] },
-        hotLabel: hotLabel || { name: '热门标签', items: [] }
+        mainLabel: mainLabel ? normalizeLabel(mainLabel) : { name: '主标签', items: [] },
+        attributeLabel: attributeLabel ? normalizeLabel(attributeLabel) : { name: '属性标签', items: [] },
+        hotLabel: hotLabel ? normalizeLabel(hotLabel) : { name: '热门标签', items: [] }
       })
       await labels.save()
     }
-    logService.admin(req.admin._id, req.admin.username, '更新标签', `主标签: ${(mainLabel?.items || []).length}个, 属性标签: ${(attributeLabel?.items || []).length}个, 热门标签: ${(hotLabel?.items || []).length}个`, req.ip)
+    logService.admin(req.admin._id, req.admin.username, '更新标签', `主标签: ${labels.mainLabel.items.length}个, 属性标签: ${labels.attributeLabel.items.length}个, 热门标签: ${labels.hotLabel.items.length}个`, req.ip)
     res.json({ code: 200, msg: '标签已更新', data: labels })
   } catch (err) {
     res.status(500).json({ code: 500, msg: '服务器错误', error: err.message })
