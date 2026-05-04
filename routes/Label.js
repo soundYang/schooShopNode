@@ -56,7 +56,15 @@ router.get('/field', async (req, res) => {
 
 function normalizeLabel(label) {
   if (!label) return { name: '', items: [] }
-  if (Array.isArray(label)) return { name: '', items: label }
+  if (typeof label === 'string') {
+    try { label = JSON.parse(label) } catch { return { name: '', items: [] } }
+  }
+  if (Array.isArray(label)) {
+    if (label.length === 1 && label[0] && typeof label[0] === 'object' && Array.isArray(label[0].items)) {
+      return label[0]
+    }
+    return { name: '', items: label }
+  }
   if (Array.isArray(label.items)) return label
   return { name: label.name || '', items: [] }
 }
