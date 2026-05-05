@@ -11,8 +11,12 @@ async function enrichLogs(logs) {
   const UserModel = mongoose.model('User')
   const AdminModel = mongoose.model('Admin')
 
-  const userIds = [...new Set(logs.filter(l => l.userId).map(l => l.userId.toString()))]
-  const adminIds = [...new Set(logs.filter(l => l.adminId).map(l => l.adminId.toString()))]
+  const userIds = [...new Set(logs
+    .filter(l => l.userId && mongoose.Types.ObjectId.isValid(l.userId))
+    .map(l => l.userId.toString()))]
+  const adminIds = [...new Set(logs
+    .filter(l => l.adminId && mongoose.Types.ObjectId.isValid(l.adminId))
+    .map(l => l.adminId.toString()))]
 
   const [users, admins] = await Promise.all([
     userIds.length ? UserModel.find({ _id: { $in: userIds } }).select('UserName').lean() : [],
