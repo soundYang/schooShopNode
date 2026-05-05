@@ -8,7 +8,7 @@ const router = express.Router()
 router.use(checkAdminMiddleware)
 
 async function enrichLogs(logs) {
-  const UserModel = mongoose.model('User')
+  const UserModel = mongoose.model('user')
   const AdminModel = mongoose.model('Admin')
 
   const userIds = [...new Set(logs
@@ -93,6 +93,7 @@ router.get('/list', async (req, res) => {
 
     res.json({ code: 200, data: { list: enriched, total } })
   } catch (err) {
+    console.error('获取日志列表失败:', err)
     res.status(500).json({ code: 500, msg: '获取日志列表失败', error: err.message })
   }
 })
