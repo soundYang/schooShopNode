@@ -48,6 +48,10 @@ router.post('/create', async (req, res) => {
       return res.status(400).json({ code: 400, msg: '商品库存不足' })
     }
 
+    if (product.shopNum === 0) {
+      await ProductModel.findByIdAndUpdate(productId, { shopStatus: 2 })
+    }
+
     const order = await OrderModel.create({
       buyerId,
       sellerId,
@@ -388,12 +392,15 @@ router.post('/cancel', async (req, res) => {
       return res.status(403).json({ code: 403, msg: '订单已付款，无法取消' })
     }
 
-    // 恢复商品库存
     await ProductModel.findByIdAndUpdate(order.productId, {
       $inc: { shopNum: order.quantity }
     })
 
-    // 卖家取消已支付的订单 → 退款中；其余情况 → 已取消
+    await ProductModel.findOneAndUpdate(
+      { _id: order.productId, shopNum: { $gt: 0 }, shopStatus: 2 },
+      { shopStatus: 0 }
+    )
+
     if (isSeller && order.status === 1) {
       order.status = 5
       const total = Math.round(order.unitPrice * order.quantity * 100) / 100
@@ -468,10 +475,14 @@ router.post('/refund', async (req, res) => {
       return res.status(429).json({ code: 429, msg: '操作太频繁，请 30 秒后再试' })
     }
 
-    // 恢复商品库存
     await ProductModel.findByIdAndUpdate(order.productId, {
       $inc: { shopNum: order.quantity }
     })
+
+    await ProductModel.findOneAndUpdate(
+      { _id: order.productId, shopNum: { $gt: 0 }, shopStatus: 2 },
+      { shopStatus: 0 }
+    )
 
     order.status = 5
     order.cancelReason = reason || '买家申请退款'

@@ -28,6 +28,7 @@ const AdminRouter = require('./routes/Admin')
 const CaptchaRouter = require('./routes/Captcha')
 const LogRouter = require('./routes/Log')
 const logService = require('./ToolFunction/logService')
+require('./jobs/orderTimeout')
 // const PayRouter = require('./routes/Pay')
 // const PayWebhookRouter = require('./routes/PayWebhook')
 

@@ -562,7 +562,7 @@ router.post('/notifications', async (req, res) => {
       const users = await UserModel.find({}, '_id')
       const notifications = users.map(u => ({
         userId: u._id,
-        type: 'new_order',
+        type: 'system',
         title,
         msg: message,
         isRead: false
@@ -573,7 +573,7 @@ router.post('/notifications', async (req, res) => {
 
     const notification = new NotificationModel({
       userId,
-      type: 'new_order',
+      type: 'system',
       title,
       msg: message,
       isRead: false
@@ -597,7 +597,7 @@ router.post('/notifications/batch', async (req, res) => {
 
     const notifications = userIds.map(id => ({
       userId: id,
-      type: 'new_order',
+      type: 'system',
       title,
       msg: message,
       isRead: false

@@ -70,7 +70,7 @@ router.post('/create',
       publishAddress: publishAddress,
       shopImg: imageUrls,
       userId: currentUserId,
-      shopStatus: 1
+      shopStatus: 0
     }
     
     const data = await ProductModel.create(productData)
@@ -146,8 +146,7 @@ router.get('/getAllPro', async (req, res) => {
     // 计算跳过的文档数
     const skip = (page - 1) * pageSize
 
-    // 查询条件：只获取 shopStatus = 1 的商品
-    const query = { shopStatus: 1 }
+    const query = { shopStatus: { $in: [0, 1] }, shopNum: { $gt: 0 } }
 
     // 查询数据（带分页）和总记录数（使用 Promise.all 并发执行提升效率）
     const [data, total] = await Promise.all([
@@ -314,7 +313,7 @@ router.post('/searchPro', async (req, res) => {
 
     const query = {
       $and: [
-        { shopStatus: 1 },
+        { shopStatus: { $in: [0, 1] }, shopNum: { $gt: 0 } },
         ...charConditions
       ]
     }
@@ -348,7 +347,7 @@ router.post('/searchPro', async (req, res) => {
 router.get('/keyProList', async (req, res) => {
   try {
     const { key } = req.query
-    const filter = { shopStatus: 1 }
+    const filter = { shopStatus: { $in: [0, 1] }, shopNum: { $gt: 0 } }
     let sort = {}
 
     if (key === 'hot') {
@@ -404,8 +403,7 @@ router.post('/tagSearch', async (req, res) => {
       })
     }
 
-    // 构建查询条件：shopStatus = 1，且 shopType 字段包含任一给定标签（$in）
-    const query = { shopStatus: 1, shopType: { $in: tagArray } }
+    const query = { shopStatus: { $in: [0, 1] }, shopNum: { $gt: 0 }, shopType: { $in: tagArray } }
 
     const skip = (parseInt(page) - 1) * parseInt(pageSize)
     const limit = parseInt(pageSize)

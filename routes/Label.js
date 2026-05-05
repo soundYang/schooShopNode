@@ -20,13 +20,7 @@ router.post('/', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const labels = await LabelModel.find()
-    const normalized = labels.map(l => ({
-      _id: l._id,
-      mainLabel: normalizeLabel(l.mainLabel),
-      attributeLabel: normalizeLabel(l.attributeLabel),
-      hotLabel: normalizeLabel(l.hotLabel)
-    }))
-    res.send({ code: 200, data: normalized })
+    res.send({ code: 200, data: labels })
   } catch (err) {
     res.status(500).json({ code: 500, msg: '服务器错误' })
   }
@@ -47,26 +41,11 @@ router.get('/field', async (req, res) => {
       return res.send({ code: 400, msg: '标签配置不存在' })
     }
 
-    const result = normalizeLabel(labelDoc[fieldName])
+    const result = labelDoc[fieldName] || { name: '', items: [] }
     res.send({ code: 200, data: result })
   } catch (err) {
     res.status(500).json({ code: 500, msg: '服务器错误' })
   }
 })
-
-function normalizeLabel(label) {
-  if (!label) return { name: '', items: [] }
-  if (typeof label === 'string') {
-    try { label = JSON.parse(label) } catch { return { name: '', items: [] } }
-  }
-  if (Array.isArray(label)) {
-    if (label.length === 1 && label[0] && typeof label[0] === 'object' && Array.isArray(label[0].items)) {
-      return label[0]
-    }
-    return { name: '', items: label }
-  }
-  if (Array.isArray(label.items)) return label
-  return { name: label.name || '', items: [] }
-}
 
 module.exports = router

@@ -1,24 +1,17 @@
 const isDev = process.env.NODE_ENV !== 'production'
 
-function getCSTTime() {
-  const date = new Date()
-  const offset = 8 * 60 * 60 * 1000
-  const cst = new Date(date.getTime() + offset)
-  return cst.toISOString().replace('Z', '+08:00')
-}
-
 const logger = {
   log: (...args) => {
-    if (isDev) console.log(`[${getCSTTime()}]`, ...args)
+    if (isDev) console.log(...args)
   },
   error: (...args) => {
-    console.error(`[${getCSTTime()}]`, ...args)
+    console.error(...args)
   },
   info: (...args) => {
-    if (isDev) console.log(`[${getCSTTime()}] [INFO]`, ...args)
+    if (isDev) console.log('[INFO]', ...args)
   },
   warn: (...args) => {
-    if (isDev) console.warn(`[${getCSTTime()}] [WARN]`, ...args)
+    if (isDev) console.warn('[WARN]', ...args)
   }
 }
 
