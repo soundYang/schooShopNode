@@ -627,6 +627,20 @@ router.get('/notifications', async (req, res) => {
   }
 })
 
+// 删除单个通知
+router.delete('/notifications/:id', async (req, res) => {
+  try {
+    const notification = await NotificationModel.findByIdAndDelete(req.params.id)
+    if (!notification) {
+      return res.status(404).json({ code: 404, msg: '通知不存在' })
+    }
+    logService.admin(req.admin._id, req.admin.username, '删除通知', `通知ID: ${req.params.id}, 标题: ${notification.title}`, req.ip)
+    res.json({ code: 200, msg: '通知已删除' })
+  } catch (err) {
+    res.status(500).json({ code: 500, msg: '服务器错误', error: err.message })
+  }
+})
+
 // ==================== 管理员管理（仅 superadmin） ====================
 
 router.get('/admins', async (req, res) => {
