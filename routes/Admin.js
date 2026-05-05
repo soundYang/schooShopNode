@@ -627,9 +627,12 @@ router.get('/notifications', async (req, res) => {
   }
 })
 
-// 删除单个通知
+// 删除单个通知（仅 superadmin）
 router.delete('/notifications/:id', async (req, res) => {
   try {
+    if (req.admin.role !== 'superadmin') {
+      return res.status(403).json({ code: 403, msg: '权限不足' })
+    }
     const notification = await NotificationModel.findByIdAndDelete(req.params.id)
     if (!notification) {
       return res.status(404).json({ code: 404, msg: '通知不存在' })
