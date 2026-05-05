@@ -16,16 +16,23 @@ const { contentModeration } = require('../middlewares/contentModeration')
 
 const ALLOWED_REGISTER_FIELDS = ['UserName', 'PassWord', 'PhoneNumber', 'StudentId', 'Avatar']
 
-// 注册接口限流：每小时每 IP 最多 5 次注册
-const registerLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
+// 注册接口限流：每分钟最多 5 次，每小时最多 15 次
+const registerMinuteLimiter = rateLimit({
+  windowMs: 60 * 1000,
   max: 5,
   message: { code: 429, msg: '注册过于频繁，请稍后再试' },
   standardHeaders: true,
   legacyHeaders: false
 })
+const registerHourLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 15,
+  message: { code: 429, msg: '注册过于频繁，请稍后再试' },
+  standardHeaders: true,
+  legacyHeaders: false
+})
 
-router.post('/userInfo', registerLimiter, contentModeration({ checkFields: ['UserName'] }), async (req,res) => {
+router.post('/userInfo', registerMinuteLimiter, registerHourLimiter, contentModeration({ checkFields: ['UserName'] }), async (req,res) => {
  try {
     const { captchaId, captchaText, ...userData } = req.body
 
