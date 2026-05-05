@@ -26,7 +26,7 @@ const registerMinuteLimiter = rateLimit({
 })
 const registerHourLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
-  max: 15,
+  max: 25,
   message: { code: 429, msg: '注册过于频繁，请稍后再试' },
   standardHeaders: true,
   legacyHeaders: false
