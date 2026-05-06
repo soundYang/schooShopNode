@@ -13,14 +13,29 @@ const { imageModeration } = require('../middlewares/imageModeration')
 const fs = require('fs').promises  
 const path = require('path')
 
-// 修复 shopType 历史数据（JSON 字符串被多层序列化的问题）
+// 修复 shopType 历史数据（递归解析所有层级的 JSON 字符串）
+function deepParse(str) {
+  let result = str
+  while (typeof result === 'string') {
+    try { result = JSON.parse(result) } catch (e) { break }
+  }
+  return result
+}
+
 function fixShopType(products) {
   const list = Array.isArray(products) ? products : [products]
   list.forEach(p => {
     if (p.shopType && Array.isArray(p.shopType)) {
       p.shopType = p.shopType.map(t => {
         if (typeof t === 'string') {
-          try { return JSON.parse(t) } catch (e) { return t }
+          const parsed = deepParse(t)
+          return Array.isArray(parsed) ? parsed.flatMap(item => {
+            if (typeof item === 'string') {
+              const deep = deepParse(item)
+              return Array.isArray(deep) ? deep : item
+            }
+            return item
+          }) : parsed
         }
         return t
       }).flat()
