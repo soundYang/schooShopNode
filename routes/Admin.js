@@ -120,6 +120,142 @@ router.get('/dashboard', async (req, res) => {
   }
 })
 
+// ==================== 仪表盘图表 ====================
+
+// 趋势数据
+router.get('/dashboard/trends', async (req, res) => {
+  try {
+    const days = Math.min(Math.max(parseInt(req.query.days) || 7, 1), 365)
+    const endDate = new Date()
+    endDate.setHours(23, 59, 59, 999)
+    const startDate = new Date()
+    startDate.setDate(startDate.getDate() - days + 1)
+    startDate.setHours(0, 0, 0, 0)
+
+    const dateList = []
+    for (let i = 0; i < days; i++) {
+      const d = new Date(startDate)
+      d.setDate(d.getDate() + i)
+      const y = d.getFullYear()
+      const m = String(d.getMonth() + 1).padStart(2, '0')
+      const day = String(d.getDate()).padStart(2, '0')
+      dateList.push(`${y}-${m}-${day}`)
+    }
+
+    const timezone = '+08:00'
+
+    const [orderStats, userStats] = await Promise.all([
+      OrderModel.aggregate([
+        {
+          $match: {
+            orderTime: { $gte: startDate, $lte: endDate },
+            status: { $in: [1, 2, 3] }
+          }
+        },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$orderTime', timezone } },
+            orders: { $sum: 1 },
+            revenue: { $sum: { $multiply: ['$unitPrice', '$quantity'] } }
+          }
+        }
+      ]),
+      UserModel.aggregate([
+        {
+          $match: {
+            CreatedTime: { $gte: startDate, $lte: endDate }
+          }
+        },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$CreatedTime', timezone } },
+            users: { $sum: 1 }
+          }
+        }
+      ])
+    ])
+
+    const orderMap = {}
+    orderStats.forEach(item => { orderMap[item._id] = { orders: item.orders, revenue: item.revenue } })
+    const userMap = {}
+    userStats.forEach(item => { userMap[item._id] = item.users })
+
+    const data = dateList.map(date => ({
+      date,
+      orders: orderMap[date]?.orders || 0,
+      revenue: orderMap[date]?.revenue || 0,
+      users: userMap[date]?.users || 0
+    }))
+
+    res.json({ code: 200, data })
+  } catch (err) {
+    res.status(500).json({ code: 500, msg: '服务器错误', error: err.message })
+  }
+})
+
+// 订单状态分布
+router.get('/dashboard/order-status', async (req, res) => {
+  try {
+    const statusLabels = { 0: '待付款', 1: '待发货', 2: '待收货', 3: '已完成', 4: '已取消', 5: '退款中' }
+
+    const stats = await OrderModel.aggregate([
+      { $group: { _id: '$status', count: { $sum: 1 } } }
+    ])
+
+    const data = Object.keys(statusLabels).map(key => {
+      const status = Number(key)
+      const found = stats.find(item => item._id === status)
+      return {
+        status,
+        label: statusLabels[key],
+        count: found ? found.count : 0
+      }
+    })
+
+    res.json({ code: 200, data })
+  } catch (err) {
+    res.status(500).json({ code: 500, msg: '服务器错误', error: err.message })
+  }
+})
+
+// 热销商品排行
+router.get('/dashboard/top-products', async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 10, 1), 100)
+
+    const stats = await OrderModel.aggregate([
+      { $match: { status: { $in: [1, 2, 3] } } },
+      {
+        $group: {
+          _id: '$productId',
+          totalQuantity: { $sum: '$quantity' },
+          totalRevenue: { $sum: { $multiply: ['$unitPrice', '$quantity'] } },
+          orderCount: { $sum: 1 }
+        }
+      },
+      { $sort: { totalQuantity: -1 } },
+      { $limit: limit }
+    ])
+
+    const productIds = stats.map(item => item._id)
+    const products = await ProductModel.find({ _id: { $in: productIds } }).select('shopName')
+    const productMap = {}
+    products.forEach(p => { productMap[p._id.toString()] = p.shopName })
+
+    const data = stats.map(item => ({
+      productId: item._id,
+      name: productMap[item._id.toString()] || '已删除',
+      totalQuantity: item.totalQuantity,
+      totalRevenue: item.totalRevenue,
+      orderCount: item.orderCount
+    }))
+
+    res.json({ code: 200, data })
+  } catch (err) {
+    res.status(500).json({ code: 500, msg: '服务器错误', error: err.message })
+  }
+})
+
 // ==================== 用户管理 ====================
 
 router.get('/users', async (req, res) => {
@@ -743,12 +879,11 @@ router.put('/profile', checkAdminMiddleware, async (req, res) => {
 
 router.get('/review-queue', async (req, res) => {
   try {
-    const { page = 1, pageSize = 20, status, targetType, violationType } = req.query
+    const { page = 1, pageSize = 20, status, targetType } = req.query
     const query = {}
 
     if (status) query.status = status
     if (targetType) query.targetType = targetType
-    if (violationType) query.violationType = violationType
 
     const [list, total] = await Promise.all([
       ReviewQueueModel.find(query)
@@ -761,7 +896,7 @@ router.get('/review-queue', async (req, res) => {
     const enriched = await Promise.all(list.map(async (item) => {
       const obj = item.toObject()
       if (item.targetType === 'product') {
-        const product = await ProductModel.findById(item.targetId).select('shopName shopPrice shopStatus shopImg')
+        const product = await ProductModel.findById(item.targetId).select('shopName shopPrice shopStatus')
         obj.targetInfo = product || null
       } else if (item.targetType === 'review') {
         const review = await ReviewModel.findById(item.targetId).select('content userName')
@@ -778,18 +913,13 @@ router.get('/review-queue', async (req, res) => {
 
 router.get('/review-queue/stats', async (req, res) => {
   try {
-    const [
-      pending, approved, rejected,
-      imagePending, textPending
-    ] = await Promise.all([
+    const [pending, approved, rejected] = await Promise.all([
       ReviewQueueModel.countDocuments({ status: 'pending' }),
       ReviewQueueModel.countDocuments({ status: 'approved' }),
-      ReviewQueueModel.countDocuments({ status: 'rejected' }),
-      ReviewQueueModel.countDocuments({ status: 'pending', violationType: 'image' }),
-      ReviewQueueModel.countDocuments({ status: 'pending', violationType: 'text' })
+      ReviewQueueModel.countDocuments({ status: 'rejected' })
     ])
 
-    res.json({ code: 200, data: { pending, approved, rejected, imagePending, textPending } })
+    res.json({ code: 200, data: { pending, approved, rejected } })
   } catch (err) {
     res.status(500).json({ code: 500, msg: '服务器错误', error: err.message })
   }
@@ -806,11 +936,6 @@ router.put('/review-queue/:id/approve', async (req, res) => {
     entry.reviewedBy = req.admin._id
     entry.reviewedAt = new Date()
     await entry.save()
-
-    // 审核通过后，将关联商品上架
-    if (entry.targetType === 'product') {
-      await ProductModel.findByIdAndUpdate(entry.targetId, { shopStatus: 1 })
-    }
 
     logService.admin(req.admin._id, req.admin.username, '审核通过', `${entry.targetType === 'product' ? '商品' : '评价'}审核通过, ID: ${entry.targetId}`, req.ip)
 

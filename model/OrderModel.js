@@ -97,14 +97,14 @@ OrderSchema.virtual('remainTime').get(function() {
   return remaining > 0 ? remaining : 0
 })
 
-// TTL 索引已移除（改用 jobs/orderTimeout.js 处理超时逻辑，确保库存正确还原）
-// OrderSchema.index(
-//     { expireAt: 1 },
-//     {
-//         expireAfterSeconds: 0,
-//         partialFilterExpression: { isBlindBox: { $ne: true } }
-//     }
-// )
+// 设置 TTL 索引（可选）：自动删除过期未付款的订单（排除盲盒订单）
+OrderSchema.index(
+    { expireAt: 1 },
+    {
+        expireAfterSeconds: 0,
+        partialFilterExpression: { isBlindBox: { $ne: true } }
+    }
+)
 
 // 确保虚拟字段在 JSON 输出中包含
 OrderSchema.set('toJSON', { virtuals: true })

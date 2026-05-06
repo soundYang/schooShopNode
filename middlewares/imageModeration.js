@@ -90,33 +90,4 @@ function imageModeration(options = {}) {
   }
 }
 
-async function moderateImagesAsync(files, threshold = 0.5) {
-  if (!files || files.length === 0) return { passed: true, results: [] }
-
-  const results = await Promise.all(files.map(async (file) => {
-    const filePath = path.resolve(file.path)
-    try {
-      const predictions = await classifyImage(filePath)
-      const nsfwItems = predictions.filter(p =>
-        NSFW_CATEGORIES.includes(p.className) && p.probability > threshold
-      )
-      return { filename: file.filename, isNSFW: nsfwItems.length > 0, nsfwItems }
-    } catch (err) {
-      return { filename: file.filename, isNSFW: false, error: err.message }
-    }
-  }))
-
-  const hasNSFW = results.some(r => r.isNSFW)
-
-  if (hasNSFW) {
-    for (const file of files) {
-      try { fs.unlinkSync(file.path) } catch (e) {}
-    }
-  }
-
-  return { passed: !hasNSFW, results }
-}
-
-module.exports = { imageModeration, moderateImagesAsync }
-
-getModel().then(() => console.log('NSFW模型已预加载')).catch(err => console.error('NSFW模型加载失败:', err))
+module.exports = { imageModeration }

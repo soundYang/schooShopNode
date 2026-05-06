@@ -34,9 +34,6 @@ require('./jobs/orderTimeout')
 
 var app = express()
 
-// 信任代理（Nginx 反代需要）
-app.set('trust proxy', 1)
-
 // 安全响应头
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
