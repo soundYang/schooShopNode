@@ -23,18 +23,23 @@ function deepParse(value) {
 }
 
 function fixShopType(products) {
+  const fixDeep = (arr) => {
+    return arr.flatMap(item => {
+      if (typeof item === 'string') {
+        let parsed = item
+        while (typeof parsed === 'string') {
+          try { parsed = JSON.parse(parsed) } catch (e) { break }
+        }
+        if (Array.isArray(parsed)) { return fixDeep(parsed) }
+        return [parsed]
+      }
+      return [item]
+    })
+  }
   const list = Array.isArray(products) ? products : [products]
   list.forEach(p => {
     if (p.shopType && Array.isArray(p.shopType)) {
-      p.shopType = p.shopType.flatMap(t => {
-        if (typeof t === 'string') {
-          const parsed = deepParse(t)
-          return Array.isArray(parsed) ? parsed.flatMap(item =>
-            typeof item === 'string' ? deepParse(item) : item
-          ) : parsed
-        }
-        return t
-      }).flat(Infinity)
+      p.shopType = fixDeep(p.shopType)
     }
   })
   return products
