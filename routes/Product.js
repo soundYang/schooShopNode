@@ -9,7 +9,6 @@ const ReviewQueueModel = require('../model/ReviewQueueModel')
 const router = express.Router()
 const checkTokenMiddleware = require('../middlewares/checkTokenMiddleware.js')
 const { contentModeration } = require('../middlewares/contentModeration')
-const { imageModeration } = require('../middlewares/imageModeration')
 const fs = require('fs').promises  
 const path = require('path')
 
@@ -76,7 +75,6 @@ router.post('/create',
   checkTokenMiddleware,
   upload.array('shopImg', 6),
   contentModeration({ checkFields: ['shopName', 'shopMsg'] }),
-  imageModeration(),
   async (req, res) => {
   try {
     const currentUserId = req.user._id
@@ -109,6 +107,7 @@ router.post('/create',
     
     // 如果包含图片，创建审核队列记录（管理员人工审核图片）
     if (data && imageUrls.length > 0) {
+      // 创建审核记录，与 NSFW 检测并行执行
       setImmediate(async () => {
         try {
           await ReviewQueueModel.create({
@@ -122,6 +121,20 @@ router.post('/create',
           })
         } catch (e) {
           console.error('创建商品审核记录失败:', e)
+        }
+      })
+      
+      // 异步后台运行 NSFW 图片审核，不阻塞响应
+      setImmediate(async () => {
+        try {
+          const { moderateImagesAsync } = require('../middlewares/imageModeration')
+          const result = await moderateImagesAsync(req.files)
+          if (!result.passed) {
+            await ProductModel.findByIdAndUpdate(data._id, { shopStatus: 3 })
+            console.log(`商品 ${data._id} 因包含违规图片已标记为违规`)
+          }
+        } catch (e) {
+          console.error('后台图片审核失败:', e)
         }
       })
     }
@@ -286,7 +299,7 @@ router.delete('/delPro', checkTokenMiddleware, async (req, res) => {
 })
 
 // 更新商品信息
-router.post('/updatePro', checkTokenMiddleware, upload.array('shopImg', 6), contentModeration({ checkFields: ['shopName', 'shopMsg'] }), imageModeration(), async (req, res) => {
+router.post('/updatePro', checkTokenMiddleware, upload.array('shopImg', 6), contentModeration({ checkFields: ['shopName', 'shopMsg'] }), async (req, res) => {
   try {
     const { _id, ...updateData } = req.body
     
@@ -324,6 +337,23 @@ router.post('/updatePro', checkTokenMiddleware, upload.array('shopImg', 6), cont
     if (!updatedProduct) {
       return res.status(404).json({ code: 404, msg: '商品不存在' })
     }
+
+    // 如果上传了新图片，异步后台运行 NSFW 图片审核
+    if (req.files && req.files.length > 0) {
+      setImmediate(async () => {
+        try {
+          const { moderateImagesAsync } = require('../middlewares/imageModeration')
+          const result = await moderateImagesAsync(req.files)
+          if (!result.passed) {
+            await ProductModel.findByIdAndUpdate(_id, { shopStatus: 3 })
+            console.log(`商品 ${_id} 因包含违规图片已标记为违规`)
+          }
+        } catch (e) {
+          console.error('后台图片审核失败:', e)
+        }
+      })
+    }
+
     res.json({
       code: 200,
       msg: '更新成功'
