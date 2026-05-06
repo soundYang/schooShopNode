@@ -743,11 +743,12 @@ router.put('/profile', checkAdminMiddleware, async (req, res) => {
 
 router.get('/review-queue', async (req, res) => {
   try {
-    const { page = 1, pageSize = 20, status, targetType } = req.query
+    const { page = 1, pageSize = 20, status, targetType, violationType } = req.query
     const query = {}
 
     if (status) query.status = status
     if (targetType) query.targetType = targetType
+    if (violationType) query.violationType = violationType
 
     const [list, total] = await Promise.all([
       ReviewQueueModel.find(query)
@@ -760,7 +761,7 @@ router.get('/review-queue', async (req, res) => {
     const enriched = await Promise.all(list.map(async (item) => {
       const obj = item.toObject()
       if (item.targetType === 'product') {
-        const product = await ProductModel.findById(item.targetId).select('shopName shopPrice shopStatus')
+        const product = await ProductModel.findById(item.targetId).select('shopName shopPrice shopStatus shopImg')
         obj.targetInfo = product || null
       } else if (item.targetType === 'review') {
         const review = await ReviewModel.findById(item.targetId).select('content userName')
@@ -777,13 +778,18 @@ router.get('/review-queue', async (req, res) => {
 
 router.get('/review-queue/stats', async (req, res) => {
   try {
-    const [pending, approved, rejected] = await Promise.all([
+    const [
+      pending, approved, rejected,
+      imagePending, textPending
+    ] = await Promise.all([
       ReviewQueueModel.countDocuments({ status: 'pending' }),
       ReviewQueueModel.countDocuments({ status: 'approved' }),
-      ReviewQueueModel.countDocuments({ status: 'rejected' })
+      ReviewQueueModel.countDocuments({ status: 'rejected' }),
+      ReviewQueueModel.countDocuments({ status: 'pending', violationType: 'image' }),
+      ReviewQueueModel.countDocuments({ status: 'pending', violationType: 'text' })
     ])
 
-    res.json({ code: 200, data: { pending, approved, rejected } })
+    res.json({ code: 200, data: { pending, approved, rejected, imagePending, textPending } })
   } catch (err) {
     res.status(500).json({ code: 500, msg: '服务器错误', error: err.message })
   }
@@ -800,6 +806,11 @@ router.put('/review-queue/:id/approve', async (req, res) => {
     entry.reviewedBy = req.admin._id
     entry.reviewedAt = new Date()
     await entry.save()
+
+    // 审核通过后，将关联商品上架
+    if (entry.targetType === 'product') {
+      await ProductModel.findByIdAndUpdate(entry.targetId, { shopStatus: 1 })
+    }
 
     logService.admin(req.admin._id, req.admin.username, '审核通过', `${entry.targetType === 'product' ? '商品' : '评价'}审核通过, ID: ${entry.targetId}`, req.ip)
 

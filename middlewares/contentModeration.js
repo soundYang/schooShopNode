@@ -80,6 +80,7 @@ function contentModeration(options = {}) {
           passed: false,
           reason: `命中敏感词: ${allHits.join(', ')}`,
           hitWords: [...new Set(allHits)],
+          hitField,
           needsReview: true
         }
         return next()

@@ -17,6 +17,11 @@ const ReviewQueueSchema = new mongoose.Schema({
   images: [{
     type: String
   }],
+  violationType: {
+    type: String,
+    enum: ['image', 'text', 'other'],
+    default: 'other'
+  },
   reason: {
     type: String,
     default: ''

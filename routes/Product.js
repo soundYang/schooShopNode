@@ -8,7 +8,7 @@ const ProductModel = require('../model/ProductModel.js')
 const ReviewQueueModel = require('../model/ReviewQueueModel')
 const router = express.Router()
 const checkTokenMiddleware = require('../middlewares/checkTokenMiddleware.js')
-const { contentModeration } = require('../middlewares/contentModeration')
+const { scanText } = require('../middlewares/contentModeration')
 const fs = require('fs').promises  
 const path = require('path')
 
@@ -74,21 +74,28 @@ const upload = multer({
 router.post('/create',
   checkTokenMiddleware,
   upload.array('shopImg', 6),
-  contentModeration({ checkFields: ['shopName', 'shopMsg'] }),
   async (req, res) => {
   try {
     const currentUserId = req.user._id
-    
-    // 处理上传的图片文件
-    const imageUrls = req.files ? req.files.map(file => {
-      return `/uploads/${file.filename}`
-    }) : []
-    
-    // 解析 JSON 字符串字段
+
+    const imageUrls = req.files ? req.files.map(file => `/uploads/${file.filename}`) : []
+
     const shopType = req.body.shopType ? JSON.parse(req.body.shopType) : []
     const publishAddress = req.body.publishAddress ? JSON.parse(req.body.publishAddress) : {}
-    
-    // 构建商品数据
+
+    // 文字审核
+    const textHits = []
+    const nameHits = scanText(req.body.shopName)
+    const msgHits = scanText(req.body.shopMsg)
+    if (nameHits.length > 0) textHits.push(...nameHits)
+    if (msgHits.length > 0) textHits.push(...msgHits)
+
+    const hasTextViolation = textHits.length > 0
+    const hasImages = imageUrls.length > 0
+
+    // 无图片且文字无违规 → 直接上架；否则先待审核
+    const initialStatus = (hasImages || hasTextViolation) ? 0 : 1
+
     const productData = {
       shopName: req.body.shopName,
       shopPrice: parseFloat(req.body.shopPrice),
@@ -100,56 +107,71 @@ router.post('/create',
       publishAddress: publishAddress,
       shopImg: imageUrls,
       userId: currentUserId,
-      shopStatus: 0
+      shopStatus: initialStatus
     }
-    
+
     const data = await ProductModel.create(productData)
-    
-    // 如果包含图片，创建审核队列记录（管理员人工审核图片）
-    if (data && imageUrls.length > 0) {
-      // 创建审核记录，与 NSFW 检测并行执行
-      setImmediate(async () => {
-        try {
-          await ReviewQueueModel.create({
-            targetType: 'product',
-            targetId: data._id,
-            content: `${req.body.shopName} - ${(req.body.shopMsg || '').substring(0, 100)}`,
-            images: imageUrls,
-            reason: '包含上传图片，需管理员审核',
-            status: 'pending',
-            submittedBy: currentUserId
-          })
-        } catch (e) {
-          console.error('创建商品审核记录失败:', e)
-        }
+
+    // 文字违规 → 创建文字审核记录
+    if (hasTextViolation) {
+      await ReviewQueueModel.create({
+        targetType: 'product',
+        targetId: data._id,
+        content: `${req.body.shopName} - ${(req.body.shopMsg || '').substring(0, 100)}`,
+        images: [],
+        violationType: 'text',
+        reason: `文字含敏感词: ${[...new Set(textHits)].join(', ')}`,
+        hitWords: [...new Set(textHits)],
+        status: 'pending',
+        submittedBy: currentUserId
       })
-      
-      // 异步后台运行 NSFW 图片审核，不阻塞响应
+    }
+
+    // 有图片 → 异步 NSFW 检测
+    if (hasImages) {
       setImmediate(async () => {
         try {
           const { moderateImagesAsync } = require('../middlewares/imageModeration')
           const result = await moderateImagesAsync(req.files)
-          if (!result.passed) {
-            await ProductModel.findByIdAndUpdate(data._id, { shopStatus: 3 })
-            console.log(`商品 ${data._id} 因包含违规图片已标记为违规`)
+
+          if (result.passed) {
+            // 图片干净 → 如果没有文字违规就上架，否则保持待审
+            const status = hasTextViolation ? 0 : 1
+            await ProductModel.findByIdAndUpdate(data._id, { shopStatus: status })
+            if (!hasTextViolation) {
+              console.log(`商品 ${data._id} 图片检测通过，已上架`)
+            }
+          } else {
+            // 图片有违规 → 创建图片审核记录
+            await ProductModel.findByIdAndUpdate(data._id, { shopStatus: 0 })
+            await ReviewQueueModel.create({
+              targetType: 'product',
+              targetId: data._id,
+              content: `${req.body.shopName} - ${(req.body.shopMsg || '').substring(0, 100)}`,
+              images: imageUrls,
+              violationType: 'image',
+              reason: `图片疑似违规: ${result.reason || 'NSFW检测未通过'}`,
+              hitWords: result.details || [],
+              status: 'pending',
+              submittedBy: currentUserId
+            })
+            console.log(`商品 ${data._id} 图片疑似违规，已提交审核`)
           }
         } catch (e) {
           console.error('后台图片审核失败:', e)
+          await ProductModel.findByIdAndUpdate(data._id, { shopStatus: 0 })
         }
       })
     }
-    
-    if (data) {
-      res.send({
-        code: 200,
-        msg: imageUrls.length > 0 ? '创建成功，图片待管理员审核' : '创建成功'
-      })
-    } else {
-      res.send({
-        code: 400,
-        msg: '创建失败'
-      })
+
+    let msg = '发布成功'
+    if (hasTextViolation && hasImages) {
+      msg = '发布成功，文字含敏感词且图片待审核'
+    } else if (hasTextViolation) {
+      msg = '发布成功，文字含敏感词待审核'
     }
+
+    res.send({ code: 200, msg })
   } catch (err) {
     console.log(err)
     res.status(500).json({ code: 500, msg: '服务器错误' })
@@ -195,7 +217,7 @@ router.get('/getAllPro', async (req, res) => {
     // 计算跳过的文档数
     const skip = (page - 1) * pageSize
 
-    const query = { shopStatus: { $in: [0, 1] }, shopNum: { $gt: 0 } }
+    const query = { shopStatus: 1, shopNum: { $gt: 0 } }
 
     // 查询数据（带分页）和总记录数（使用 Promise.all 并发执行提升效率）
     const [data, total] = await Promise.all([
@@ -299,18 +321,16 @@ router.delete('/delPro', checkTokenMiddleware, async (req, res) => {
 })
 
 // 更新商品信息
-router.post('/updatePro', checkTokenMiddleware, upload.array('shopImg', 6), contentModeration({ checkFields: ['shopName', 'shopMsg'] }), async (req, res) => {
+router.post('/updatePro', checkTokenMiddleware, upload.array('shopImg', 6), async (req, res) => {
   try {
     const { _id, ...updateData } = req.body
-    
-    // 验证商品ID是否存在
+
     if (!_id) {
       return res.status(400).json({ code: 400, msg: '未查询到商品' })
     }
 
     delete updateData.userId
 
-    // 解析 JSON 字符串字段（FormData 传过来的是字符串）
     if (typeof updateData.shopType === 'string') {
       try { updateData.shopType = JSON.parse(updateData.shopType) } catch (e) {}
     }
@@ -319,34 +339,47 @@ router.post('/updatePro', checkTokenMiddleware, upload.array('shopImg', 6), cont
     }
 
     // 如果有上传新图片，替换商品图片
-    if (req.files && req.files.length > 0) {
+    const newImages = req.files && req.files.length > 0
+    if (newImages) {
       updateData.shopImg = req.files.map(file => `/uploads/${file.filename}`)
     }
 
-    // 执行更新操作，返回更新后的文档
     const updatedProduct = await ProductModel.findByIdAndUpdate(
-      _id, 
+      _id,
       updateData,
-      { 
+      {
         returnDocument: 'after',
         runValidators: true
       }
     )
 
-    // 检查商品是否存在
     if (!updatedProduct) {
       return res.status(404).json({ code: 404, msg: '商品不存在' })
     }
 
-    // 如果上传了新图片，异步后台运行 NSFW 图片审核
-    if (req.files && req.files.length > 0) {
+    // 如果上传了新图片，异步 NSFW 检测
+    if (newImages) {
       setImmediate(async () => {
         try {
           const { moderateImagesAsync } = require('../middlewares/imageModeration')
           const result = await moderateImagesAsync(req.files)
-          if (!result.passed) {
-            await ProductModel.findByIdAndUpdate(_id, { shopStatus: 3 })
-            console.log(`商品 ${_id} 因包含违规图片已标记为违规`)
+
+          if (result.passed) {
+            console.log(`商品 ${_id} 更新图片检测通过`)
+          } else {
+            await ProductModel.findByIdAndUpdate(_id, { shopStatus: 0 })
+            await ReviewQueueModel.create({
+              targetType: 'product',
+              targetId: _id,
+              content: `${updateData.shopName || updatedProduct.shopName} - ${(updateData.shopMsg || updatedProduct.shopMsg || '').substring(0, 100)}`,
+              images: updateData.shopImg || [],
+              violationType: 'image',
+              reason: `图片疑似违规: ${result.reason || 'NSFW检测未通过'}`,
+              hitWords: result.details || [],
+              status: 'pending',
+              submittedBy: req.user._id
+            })
+            console.log(`商品 ${_id} 更新图片疑似违规，已提交审核`)
           }
         } catch (e) {
           console.error('后台图片审核失败:', e)
@@ -354,10 +387,7 @@ router.post('/updatePro', checkTokenMiddleware, upload.array('shopImg', 6), cont
       })
     }
 
-    res.json({
-      code: 200,
-      msg: '更新成功'
-    })
+    res.json({ code: 200, msg: '更新成功' })
   } catch (err) {
     console.error('更新商品失败：', err)
     res.status(500).json({ code: 500, msg: '服务器错误' })
@@ -397,7 +427,7 @@ router.post('/searchPro', async (req, res) => {
 
     const query = {
       $and: [
-        { shopStatus: { $in: [0, 1] }, shopNum: { $gt: 0 } },
+        { shopStatus: 1, shopNum: { $gt: 0 } },
         ...charConditions
       ]
     }
@@ -434,7 +464,7 @@ router.post('/searchPro', async (req, res) => {
 router.get('/keyProList', async (req, res) => {
   try {
     const { key } = req.query
-    const filter = { shopStatus: { $in: [0, 1] }, shopNum: { $gt: 0 } }
+    const filter = { shopStatus: 1, shopNum: { $gt: 0 } }
     let sort = {}
 
     if (key === 'hot') {
@@ -491,7 +521,7 @@ router.post('/tagSearch', async (req, res) => {
       })
     }
 
-    const query = { shopStatus: { $in: [0, 1] }, shopNum: { $gt: 0 }, shopType: { $in: tagArray } }
+    const query = { shopStatus: 1, shopNum: { $gt: 0 }, shopType: { $in: tagArray } }
 
     const skip = (parseInt(page) - 1) * parseInt(pageSize)
     const limit = parseInt(pageSize)
