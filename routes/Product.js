@@ -245,7 +245,7 @@ router.delete('/delPro', checkTokenMiddleware, async (req, res) => {
 })
 
 // 更新商品信息
-router.post('/updatePro', checkTokenMiddleware, contentModeration({ checkFields: ['shopName', 'shopMsg'] }), async (req, res) => {
+router.post('/updatePro', checkTokenMiddleware, upload.array('shopImg', 6), contentModeration({ checkFields: ['shopName', 'shopMsg'] }), imageModeration(), async (req, res) => {
   try {
     const { _id, ...updateData } = req.body
     
@@ -256,13 +256,18 @@ router.post('/updatePro', checkTokenMiddleware, contentModeration({ checkFields:
 
     delete updateData.userId
 
+    // 如果有上传新图片，替换商品图片
+    if (req.files && req.files.length > 0) {
+      updateData.shopImg = req.files.map(file => `/uploads/${file.filename}`)
+    }
+
     // 执行更新操作，返回更新后的文档
     const updatedProduct = await ProductModel.findByIdAndUpdate(
       _id, 
       updateData,
       { 
-        returnDocument: 'after', // 返回更新后的文档（替代 { new: true }）
-        runValidators: true      // 可选：确保更新符合模型的验证规则
+        returnDocument: 'after',
+        runValidators: true
       }
     )
 
