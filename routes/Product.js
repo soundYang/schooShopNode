@@ -13,9 +13,9 @@ const { imageModeration } = require('../middlewares/imageModeration')
 const fs = require('fs').promises  
 const path = require('path')
 
-// 修复 shopType 历史数据（递归解析所有层级的 JSON 字符串）
-function deepParse(str) {
-  let result = str
+// 递归解析 JSON 字符串直到不再是字符串
+function deepParse(value) {
+  let result = value
   while (typeof result === 'string') {
     try { result = JSON.parse(result) } catch (e) { break }
   }
@@ -26,19 +26,15 @@ function fixShopType(products) {
   const list = Array.isArray(products) ? products : [products]
   list.forEach(p => {
     if (p.shopType && Array.isArray(p.shopType)) {
-      p.shopType = p.shopType.map(t => {
+      p.shopType = p.shopType.flatMap(t => {
         if (typeof t === 'string') {
           const parsed = deepParse(t)
-          return Array.isArray(parsed) ? parsed.flatMap(item => {
-            if (typeof item === 'string') {
-              const deep = deepParse(item)
-              return Array.isArray(deep) ? deep : item
-            }
-            return item
-          }) : parsed
+          return Array.isArray(parsed) ? parsed.flatMap(item =>
+            typeof item === 'string' ? deepParse(item) : item
+          ) : parsed
         }
         return t
-      }).flat()
+      }).flat(Infinity)
     }
   })
   return products
@@ -149,7 +145,7 @@ router.get('/getPro', async (req,res) => {
       { _id: req.query.id },
       { $inc: { viewCount: 1 } },
       { returnDocument: 'after' }
-    )
+    ).lean()
     if(!data) {
       return res.send({
         code:400
@@ -188,7 +184,8 @@ router.get('/getAllPro', async (req, res) => {
       ProductModel.find(query)
         .skip(skip)
         .limit(pageSize)
-        .sort({ createTime: -1 }),
+        .sort({ createTime: -1 })
+        .lean(),
       ProductModel.countDocuments(query)
     ])
 
@@ -225,7 +222,8 @@ router.get('/getUserProducts',checkTokenMiddleware, async (req, res) => {
       ProductModel.find({userId})
         .skip(skip)
         .limit(limit)
-        .sort({ createTime: -1 }),
+        .sort({ createTime: -1 })
+        .lean(),
       ProductModel.countDocuments({userId})  // 获取总记录数
     ])
     fixShopType(data)
@@ -376,7 +374,8 @@ router.post('/searchPro', async (req, res) => {
       ProductModel.find(query)
         .skip(skip)
         .limit(limit)
-        .sort({ viewCount: -1, createTime: -1 }),
+        .sort({ viewCount: -1, createTime: -1 })
+        .lean(),
       ProductModel.countDocuments(query)
     ])
 
@@ -414,7 +413,7 @@ router.get('/keyProList', async (req, res) => {
       })
     }
 
-    const products = await ProductModel.find(filter).sort(sort).limit(8)
+    const products = await ProductModel.find(filter).sort(sort).limit(8).lean()
     fixShopType(products)
     res.json({
       code: 200,
@@ -467,7 +466,8 @@ router.post('/tagSearch', async (req, res) => {
       ProductModel.find(query)
         .skip(skip)
         .limit(limit)
-        .sort({ createTime: -1 }), // 按创建时间倒序
+        .sort({ createTime: -1 })
+        .lean(),
       ProductModel.countDocuments(query)
     ])
 
