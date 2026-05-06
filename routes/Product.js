@@ -13,6 +13,22 @@ const { imageModeration } = require('../middlewares/imageModeration')
 const fs = require('fs').promises  
 const path = require('path')
 
+// 修复 shopType 历史数据（JSON 字符串被多层序列化的问题）
+function fixShopType(products) {
+  const list = Array.isArray(products) ? products : [products]
+  list.forEach(p => {
+    if (p.shopType && Array.isArray(p.shopType)) {
+      p.shopType = p.shopType.map(t => {
+        if (typeof t === 'string') {
+          try { return JSON.parse(t) } catch (e) { return t }
+        }
+        return t
+      }).flat()
+    }
+  })
+  return products
+}
+
 // 配置 multer 用于文件上传
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -124,6 +140,10 @@ router.get('/getPro', async (req,res) => {
         code:400
       })
     }
+
+    // 修复历史数据中 shopType 被存为字符串的问题
+    fixShopType(data)
+
     res.send({
       code:200,
       data
@@ -156,6 +176,8 @@ router.get('/getAllPro', async (req, res) => {
         .sort({ createTime: -1 }),
       ProductModel.countDocuments(query)
     ])
+
+    fixShopType(data)
 
     res.json({
       code: 200,
@@ -191,6 +213,7 @@ router.get('/getUserProducts',checkTokenMiddleware, async (req, res) => {
         .sort({ createTime: -1 }),
       ProductModel.countDocuments({userId})  // 获取总记录数
     ])
+    fixShopType(data)
     res.json({
       code: 200,
       data,
@@ -255,6 +278,14 @@ router.post('/updatePro', checkTokenMiddleware, upload.array('shopImg', 6), cont
     }
 
     delete updateData.userId
+
+    // 解析 JSON 字符串字段（FormData 传过来的是字符串）
+    if (typeof updateData.shopType === 'string') {
+      try { updateData.shopType = JSON.parse(updateData.shopType) } catch (e) {}
+    }
+    if (typeof updateData.publishAddress === 'string') {
+      try { updateData.publishAddress = JSON.parse(updateData.publishAddress) } catch (e) {}
+    }
 
     // 如果有上传新图片，替换商品图片
     if (req.files && req.files.length > 0) {
@@ -334,6 +365,8 @@ router.post('/searchPro', async (req, res) => {
       ProductModel.countDocuments(query)
     ])
 
+    fixShopType(products)
+
     res.json({
       code: 200,
       data: products,
@@ -367,6 +400,7 @@ router.get('/keyProList', async (req, res) => {
     }
 
     const products = await ProductModel.find(filter).sort(sort).limit(8)
+    fixShopType(products)
     res.json({
       code: 200,
       data: products
@@ -421,6 +455,8 @@ router.post('/tagSearch', async (req, res) => {
         .sort({ createTime: -1 }), // 按创建时间倒序
       ProductModel.countDocuments(query)
     ])
+
+    fixShopType(products)
 
     res.json({
       code: 200,
