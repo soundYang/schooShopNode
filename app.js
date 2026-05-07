@@ -47,8 +47,17 @@ app.use(cors({
   credentials: true
 }))
 
-// 提供静态文件服务
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
+// 处理已有上传文件中中文名被双重编码的问题
+app.use('/uploads', (req, res, next) => {
+  try {
+    if (req.url.includes('%C3')) {
+      const once = decodeURIComponent(req.url)
+      const twice = decodeURIComponent(once)
+      if (twice !== once) req.url = twice
+    }
+  } catch (e) {}
+  next()
+}, express.static(path.join(__dirname, 'uploads')))
 
 // 确保 uploads 目录存在
 const fs = require('fs')

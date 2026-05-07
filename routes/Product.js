@@ -51,7 +51,11 @@ const storage = multer.diskStorage({
   },
   filename: function (req, file, cb) {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9)
-    cb(null, uniqueSuffix + '-' + file.originalname)
+    const ext = path.extname(file.originalname)
+    const baseName = path.basename(file.originalname, ext)
+      .replace(/[^\w\s.-]/g, '')
+      .replace(/\s+/g, '_')
+    cb(null, uniqueSuffix + '-' + (baseName || 'img') + ext)
   }
 })
 
