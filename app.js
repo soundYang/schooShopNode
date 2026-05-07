@@ -52,7 +52,8 @@ app.use('/uploads', (req, res, next) => {
   try {
     if (req.url.includes('%C3')) {
       const once = decodeURIComponent(req.url)
-      const twice = decodeURIComponent(once)
+      const buf = Buffer.from(once, 'latin1')
+      const twice = buf.toString('utf-8')
       if (twice !== once) req.url = twice
     }
   } catch (e) {}
