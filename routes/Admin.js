@@ -102,7 +102,7 @@ router.get('/dashboard', async (req, res) => {
       OrderModel.countDocuments({}),
       OrderModel.countDocuments({ orderTime: { $gte: today } }),
       ReviewModel.countDocuments({}),
-      ProductModel.countDocuments({ shopNum: { $lte: 1 }, shopStatus: 0 }),
+      ProductModel.countDocuments({ shopNum: { $lte: 1 }, shopStatus: 1 }),
       OrderModel.aggregate([
         { $match: { status: { $in: [1, 2, 3] } } },
         { $group: { _id: null, total: { $sum: { $multiply: ['$unitPrice', '$quantity'] } } } }
