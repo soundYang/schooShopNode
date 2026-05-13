@@ -6,7 +6,6 @@ const blindBoxRecordSchema = new mongoose.Schema({
   date: { type: String, required: true },
   boxes: [
     {
-      // 不再需要自定义 boxId，MongoDB 会自动生成 _id
       randomPrice: { type: Number, required: true },
       productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
       productSnapshot: {
