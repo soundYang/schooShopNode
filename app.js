@@ -15,6 +15,7 @@ logger.token('date-utc8', function () {
 });
 const rateLimit = require('express-rate-limit')
 const cors = require('cors')
+const compression = require('compression')
 
 const UserRouter = require('./routes/user')
 const ProductRouter = require('./routes/Product')
@@ -28,6 +29,7 @@ const AdminRouter = require('./routes/Admin')
 const CaptchaRouter = require('./routes/Captcha')
 const LogRouter = require('./routes/Log')
 const logService = require('./ToolFunction/logService')
+const HealthRouter = require('./routes/Health')
 require('./jobs/orderTimeout')
 // const PayRouter = require('./routes/Pay')
 // const PayWebhookRouter = require('./routes/PayWebhook')
@@ -47,6 +49,13 @@ app.use(cors({
   credentials: true
 }))
 
+// Gzip 响应压缩
+app.use(compression({
+  level: 6,
+  threshold: 1024,
+  filter: (req) => !req.path.startsWith('/uploads')
+}))
+
 // 处理已有上传文件中中文名被双重编码的问题
 app.use('/uploads', (req, res, next) => {
   try {
@@ -58,7 +67,14 @@ app.use('/uploads', (req, res, next) => {
     }
   } catch (e) {}
   next()
-}, express.static(path.join(__dirname, 'uploads')))
+}, express.static(path.join(__dirname, 'uploads'), {
+  maxAge: '30d',
+  etag: true,
+  lastModified: true,
+  setHeaders: (res) => {
+    res.setHeader('Cache-Control', 'public, max-age=2592000, immutable')
+  }
+}))
 
 // 确保 uploads 目录存在
 const fs = require('fs')
@@ -72,6 +88,15 @@ const limiter = rateLimit({
   message: { code: 429, msg: '请求过于频繁，请稍后再试' }
 })
 app.use('/login', limiter)
+
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  message: { code: 429, msg: '请求过于频繁，请稍后再试' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.path.startsWith('/uploads')
+})
 
 app.use(express.json({ limit: '15mb' }))
 app.use(express.urlencoded({ extended: true, limit: '15mb' }))
@@ -96,17 +121,18 @@ app.use(logger(':method :url :status :response-time ms - :res[content-length] :d
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.use('/user', UserRouter)
-app.use('/product', ProductRouter)
-app.use('/address', AddressRouter)
-app.use('/order', OrderRouter)
-app.use('/review', ReviewRouter)
+app.use('/user', apiLimiter, UserRouter)
+app.use('/product', apiLimiter, ProductRouter)
+app.use('/address', apiLimiter, AddressRouter)
+app.use('/order', apiLimiter, OrderRouter)
+app.use('/review', apiLimiter, ReviewRouter)
 app.use('/label', LabelRouter)
 app.use('/blindBox', blindBox)
 app.use('/notification', NotificationRouter)
 app.use('/admin', AdminRouter)
 app.use('/captcha', CaptchaRouter)
 app.use('/log', LogRouter)
+app.use('/health', HealthRouter)
 // app.use('/pay', PayRouter)
 // app.use('/', PayWebhookRouter)
 

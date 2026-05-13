@@ -44,6 +44,7 @@ async function processExpiredOrders() {
   }
 }
 
-setInterval(processExpiredOrders, CHECK_INTERVAL)
-
-console.log('订单超时自动取消任务已启动')
+if (!process.env.pm_id || process.env.pm_id === '0') {
+  setInterval(processExpiredOrders, CHECK_INTERVAL)
+  console.log('订单超时自动取消任务已启动')
+}

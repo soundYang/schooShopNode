@@ -63,6 +63,11 @@ const ProductSchema = new mongoose.Schema({
  }
 })
 
+ProductSchema.index({ shopStatus: 1, shopNum: 1, createTime: -1 })
+ProductSchema.index({ userId: 1, createTime: -1 })
+ProductSchema.index({ shopName: 'text', shopMsg: 'text' })
+ProductSchema.index({ shopType: 1, shopStatus: 1 })
+
 const ProductModel = mongoose.model('Product', ProductSchema)
 
 module.exports = ProductModel

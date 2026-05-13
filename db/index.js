@@ -12,7 +12,14 @@ module.exports = (success, error) => {
 
   // 支持 MongoDB 认证
   let uri = `mongodb://${DBHOST}:${DBPORT}/${DBNAME}`
-  const options = {}
+  const options = {
+    maxPoolSize: 20,
+    minPoolSize: 5,
+    serverSelectionTimeoutMS: 5000,
+    heartbeatFrequencyMS: 10000,
+    connectTimeoutMS: 10000,
+    socketTimeoutMS: 45000
+  }
   if (DBUSER && DBPASS) {
     uri = `mongodb://${encodeURIComponent(DBUSER)}:${encodeURIComponent(DBPASS)}@${DBHOST}:${DBPORT}/${DBNAME}?authSource=admin`
   }

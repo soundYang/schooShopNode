@@ -20,11 +20,20 @@ const UserModel = require('../model/UserModel')
 const NotificationModel = require('../model/NotificationModel')
 
 const checkTokenMiddleware = require('../middlewares/checkTokenMiddleware')
+const rateLimit = require('express-rate-limit')
 
 router.use(checkTokenMiddleware)
 
+const orderCreateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  message: { code: 429, msg: '下单过于频繁，请稍后再试' },
+  standardHeaders: true,
+  legacyHeaders: false
+})
+
 // 添加订单
-router.post('/create', async (req, res) => {
+router.post('/create', orderCreateLimiter, async (req, res) => {
   try {
     const buyerId = req.user._id
     const { sellerId, productId, deliverAddress, isBlindBox, unitPrice, quantity } = req.body

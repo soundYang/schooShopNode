@@ -97,7 +97,7 @@ OrderSchema.virtual('remainTime').get(function() {
   return remaining > 0 ? remaining : 0
 })
 
-// 设置 TTL 索引（可选）：自动删除过期未付款的订单（排除盲盒订单）
+// 订单过期自动删除（TTL 索引）
 OrderSchema.index(
     { expireAt: 1 },
     {
@@ -105,6 +105,9 @@ OrderSchema.index(
         partialFilterExpression: { isBlindBox: { $ne: true } }
     }
 )
+
+OrderSchema.index({ buyerId: 1, status: 1, orderTime: -1 })
+OrderSchema.index({ sellerId: 1, status: 1, orderTime: -1 })
 
 // 确保虚拟字段在 JSON 输出中包含
 OrderSchema.set('toJSON', { virtuals: true })
