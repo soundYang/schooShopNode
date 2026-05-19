@@ -91,15 +91,20 @@ router.post('/login', async (req,res) => {
   if (!UserName || !PassWord) {
     return res.json({
       code: 400,
-      msg: '用户名和密码不能为空'
+      msg: '用户名/手机号和密码不能为空'
     })
   }
   
   try {
-    const data = await UserModel.findOne({
-      UserName,
-      PassWord: md5(PassWord)
-    }).populate([
+    const loginQuery = { PassWord: md5(PassWord) }
+    const phoneNum = Number(UserName)
+    if (!isNaN(phoneNum) && UserName.length >= 10) {
+      loginQuery.PhoneNumber = phoneNum
+    } else {
+      loginQuery.UserName = UserName
+    }
+
+    const data = await UserModel.findOne(loginQuery).populate([
       'Addresses',
       'defaultAddress'
     ]).lean()
