@@ -11,6 +11,7 @@ const checkTokenMiddleware = require('../middlewares/checkTokenMiddleware.js')
 const { scanText } = require('../middlewares/contentModeration')
 const fs = require('fs').promises  
 const path = require('path')
+const { cache } = require('../ToolFunction/redisClient')
 
 // 递归解析 JSON 字符串直到不再是字符串
 function deepParse(value) {
@@ -176,6 +177,7 @@ router.post('/create',
     }
 
     res.send({ code: 200, msg })
+    cache.del('product:list:*')
   } catch (err) {
     console.log(err)
     res.status(500).json({ code: 500, msg: '服务器错误' })
@@ -185,24 +187,25 @@ router.post('/create',
 // 获取单个商品信息
 router.get('/getPro', async (req,res) => {
   try {
-    const data = await ProductModel.findOneAndUpdate(
-      { _id: req.query.id },
-      { $inc: { viewCount: 1 } },
-      { returnDocument: 'after' }
-    ).lean()
+    const productId = req.query.id
+    const cacheKey = `product:detail:${productId}`
+
+    const data = await cache.wrap(cacheKey, 60, async () => {
+      const p = await ProductModel.findOneAndUpdate(
+        { _id: productId },
+        { $inc: { viewCount: 1 } },
+        { returnDocument: 'after' }
+      ).lean()
+      if (!p) return null
+      fixShopType(p)
+      return p
+    })
+
     if(!data) {
-      return res.send({
-        code:400
-      })
+      return res.send({ code:400 })
     }
 
-    // 修复历史数据中 shopType 被存为字符串的问题
-    fixShopType(data)
-
-    res.send({
-      code:200,
-      data
-    })
+    res.send({ code:200, data })
   } catch (err) {
     res.status(500).json({ code: 500, msg: '服务器错误' })
   }
@@ -211,37 +214,39 @@ router.get('/getPro', async (req,res) => {
 // 获取所有商品信息
 router.get('/getAllPro', async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1          // 当前页码，默认为1
-    const pageSize = parseInt(req.query.pageSize) || 10 // 每页条数，默认为10
+    const page = parseInt(req.query.page) || 1
+    const pageSize = parseInt(req.query.pageSize) || 10
     
     if (page < 1 || pageSize < 1) {
       return res.status(400).json({ code: 400, msg: '页码和每页条数必须为正整数' })
     }
 
-    // 计算跳过的文档数
-    const skip = (page - 1) * pageSize
+    const cacheKey = `product:list:${page}:${pageSize}`
 
-    const query = { shopStatus: 1, shopNum: { $gt: 0 } }
+    const result = await cache.wrap(cacheKey, 30, async () => {
+      const skip = (page - 1) * pageSize
+      const query = { shopStatus: 1, shopNum: { $gt: 0 } }
 
-    // 查询数据（带分页）和总记录数（使用 Promise.all 并发执行提升效率）
-    const [data, total] = await Promise.all([
-      ProductModel.find(query)
-        .skip(skip)
-        .limit(pageSize)
-        .sort({ createTime: -1 })
-        .lean(),
-      ProductModel.countDocuments(query)
-    ])
+      const [data, total] = await Promise.all([
+        ProductModel.find(query)
+          .skip(skip)
+          .limit(pageSize)
+          .sort({ createTime: -1 })
+          .lean(),
+        ProductModel.countDocuments(query)
+      ])
 
-    fixShopType(data)
+      fixShopType(data)
+      return { data, total }
+    })
 
     res.json({
       code: 200,
-      data,
-      total,
+      data: result.data,
+      total: result.total,
       page,
       pageSize,
-      totalPages: Math.ceil(total / pageSize)
+      totalPages: Math.ceil(result.total / pageSize)
     })
   } catch (err) {
     res.status(500).json({ code: 500, msg: '服务器错误' })
@@ -318,6 +323,8 @@ router.delete('/delPro', checkTokenMiddleware, async (req, res) => {
     await ProductModel.findByIdAndDelete(productId)
 
     res.json({ code: 200, msg: '删除成功' })
+    cache.del('product:list:*')
+    cache.del(`product:detail:${productId}`)
   } catch (err) {
     console.error(err)
     res.status(500).json({ code: 500, msg: '服务器错误' })
@@ -392,6 +399,8 @@ router.post('/updatePro', checkTokenMiddleware, upload.array('shopImg', 6), asyn
     }
 
     res.json({ code: 200, msg: '更新成功' })
+    cache.del('product:list:*')
+    cache.del(`product:detail:${_id}`)
   } catch (err) {
     console.error('更新商品失败：', err)
     res.status(500).json({ code: 500, msg: '服务器错误' })
