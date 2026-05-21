@@ -1,4 +1,4 @@
-﻿const router = require('express').Router()
+const router = require('express').Router()
 const { generateUserBlindBoxes, checkAndUpdateBlindBoxState } = require('../services/blindBoxService')
 const BlindBoxRecord = require('../model/BlindBoxRecordModel')
 const Product = require('../model/ProductModel')
@@ -87,6 +87,20 @@ router.post('/buy', checkTokenMiddleware, async (req, res) => {
 
   await UserModel.findByIdAndUpdate(userId, { $inc: { Balance: -total } })
 
+  // 原子扣库存
+  const deducted = await Product.findOneAndUpdate(
+    { _id: box.productId, shopNum: { $gt: 0 } },
+    { $inc: { shopNum: -1 } },
+    { returnDocument: 'after' }
+  )
+  if (!deducted) {
+    await UserModel.findByIdAndUpdate(userId, { $inc: { Balance: total } })
+    return res.status(400).json({ code: 400, msg: '该盲盒商品已售罄' })
+  }
+  if (deducted.shopNum === 0) {
+    await Product.findByIdAndUpdate(box.productId, { shopStatus: 2 })
+  }
+
   // 创建已支付订单（钱冻结在平台，卖家等确认收货后到账）
   const order = await OrderModel.create({
     buyerId: userId,
@@ -103,10 +117,10 @@ router.post('/buy', checkTokenMiddleware, async (req, res) => {
     expireAt: null
   })
 
-  // 更新盲盒状态
-  box.status = 1
-  box.purchasedAt = new Date()
-  await record.save()
+  await BlindBoxRecord.findOneAndUpdate(
+    { userId, date: today, 'boxes._id': boxId },
+    { $set: { 'boxes.$.status': 1, 'boxes.$.orderId': order._id, 'boxes.$.purchasedAt': new Date() } }
+  )
 
   // 通知卖家
   await NotificationModel.create({
@@ -120,7 +134,7 @@ router.post('/buy', checkTokenMiddleware, async (req, res) => {
   res.json({ code: 200, data: { orderId: order._id } })
 })
 
-// 揭晓盲盒（自动创建待付款订单 + 揭晓）
+// 揭晓盲盒（仅揭晓，不创建订单）
 router.put('/reveal/:boxId', checkTokenMiddleware, async (req, res) => {
   try {
     const userId = req.user._id
@@ -132,48 +146,97 @@ router.put('/reveal/:boxId', checkTokenMiddleware, async (req, res) => {
 
     const box = record.boxes.id(boxId)
     if (!box) return res.status(404).json({ code: 404, msg: '盲盒不存在' })
-    if (box.isRevealed) return res.status(400).json({ code: 400, msg: '盲盒已揭晓' })
-
-    // 如果尚未购买，自动创建待付款订单（地址为空，用户在订单详情页设置）
-    if (box.status === 0) {
-      const product = await Product.findById(box.productId)
-      if (!product) return res.status(404).json({ code: 404, msg: '盲盒商品不存在' })
-
-      if (String(userId) === String(product.userId)) {
-        return res.status(400).json({ code: 400, msg: '不能购买自己的盲盒' })
-      }
-
-      const order = await OrderModel.create({
-        buyerId: userId,
-        sellerId: product.userId,
-        productId: box.productId,
-        quantity: 1,
-        status: 0,
-        deliverMethod: 0,
-        deliverAddress: null,
-        isBlindBox: true,
-        unitPrice: box.randomPrice,
-        orderTime: new Date(),
-        expireAt: null
+    if (box.isRevealed) {
+      return res.json({
+        code: 200,
+        data: {
+          randomPrice: box.randomPrice,
+          productId: box.productId,
+          productSnapshot: box.productSnapshot
+        }
       })
-
-      box.status = 1
-      box.orderId = order._id
-      box.purchasedAt = new Date()
-      await record.save()
     }
 
-    box.isRevealed = true
-    await record.save()
+    const updated = await BlindBoxRecord.findOneAndUpdate(
+      { userId, date: today, 'boxes._id': boxId },
+      { $set: { 'boxes.$.isRevealed': true } },
+      {  returnDocument: 'after'  }
+    )
+
+    if (!updated) return res.status(400).json({ code: 400, msg: '揭晓失败' })
+    const updatedBox = updated.boxes.id(boxId)
 
     res.json({
       code: 200,
       data: {
-        randomPrice: box.randomPrice,
-        label: box.productSnapshot.label || '',
-        orderId: box.orderId
+        randomPrice: updatedBox.randomPrice,
+        productId: updatedBox.productId,
+        productSnapshot: updatedBox.productSnapshot
       }
     })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ code: 500, msg: '服务器错误' })
+  }
+})
+
+// 确认购买已揭晓的盲盒（创建待付款订单）
+router.post('/create-order', checkTokenMiddleware, async (req, res) => {
+  try {
+    const userId = req.user._id
+    const { boxId, deliverAddress } = req.body
+    const today = new Date().toISOString().split('T')[0]
+
+    if (!deliverAddress) {
+      return res.status(400).json({ code: 400, msg: '请填写收货地址' })
+    }
+
+    const record = await BlindBoxRecord.findOne({ userId, date: today })
+    if (!record) return res.status(404).json({ code: 404, msg: '盲盒记录不存在' })
+
+    const box = record.boxes.id(boxId)
+    if (!box) return res.status(404).json({ code: 404, msg: '盲盒不存在' })
+    if (!box.isRevealed) return res.status(400).json({ code: 400, msg: '请先揭晓盲盒' })
+    if (box.status === 1) return res.status(400).json({ code: 400, msg: '盲盒已购买' })
+
+    const product = await Product.findById(box.productId)
+    if (!product) return res.status(404).json({ code: 404, msg: '盲盒商品不存在' })
+
+    if (String(userId) === String(product.userId)) {
+      return res.status(400).json({ code: 400, msg: '不能购买自己的盲盒' })
+    }
+
+    const deducted = await Product.findOneAndUpdate(
+      { _id: box.productId, shopNum: { $gt: 0 } },
+      { $inc: { shopNum: -1 } },
+      { returnDocument: 'after' }
+    )
+    if (!deducted) {
+      return res.status(400).json({ code: 400, msg: '该盲盒商品已售罄' })
+    }
+    if (deducted.shopNum === 0) {
+      await Product.findByIdAndUpdate(box.productId, { shopStatus: 2 })
+    }
+
+    const order = await OrderModel.create({
+      buyerId: userId,
+      sellerId: product.userId,
+      productId: box.productId,
+      quantity: 1,
+      status: 0,
+      deliverMethod: 0,
+      deliverAddress,
+      isBlindBox: true,
+      unitPrice: box.randomPrice,
+      orderTime: new Date()
+    })
+
+    await BlindBoxRecord.findOneAndUpdate(
+      { userId, date: today, 'boxes._id': boxId },
+      { $set: { 'boxes.$.status': 1, 'boxes.$.orderId': order._id, 'boxes.$.purchasedAt': new Date() } }
+    )
+
+    res.json({ code: 200, data: { orderId: order._id } })
   } catch (err) {
     console.error(err)
     res.status(500).json({ code: 500, msg: '服务器错误' })

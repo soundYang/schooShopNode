@@ -1,4 +1,4 @@
-﻿const Product = require('../model/ProductModel')
+const Product = require('../model/ProductModel')
 const BlindBoxRecord = require('../model/BlindBoxRecordModel')
 const User = require('../model/UserModel')
 const OrderModel = require('../model/OrderModel')
@@ -29,6 +29,11 @@ async function setBlindBoxOpen(open) {
 }
 
 async function checkAndUpdateBlindBoxState() {
+  if (process.env.BLIND_BOX_IGNORE_LIMIT === 'true') {
+    const productCount = await getBlindBoxProductCount()
+    return { open: true, count: productCount, changed: false }
+  }
+
   const productCount = await getBlindBoxProductCount()
   const currentlyOpen = await isBlindBoxOpen()
 
@@ -49,19 +54,26 @@ async function checkAndUpdateBlindBoxState() {
 }
 
 async function selectProductByPrice(randomPrice, excludeProductIds = []) {
-  const min = randomPrice * 0.5
-  const max = randomPrice * 1.5
+  const isLocalMode = process.env.BLIND_BOX_IGNORE_LIMIT === 'true'
 
   const baseFilter = {
     isBlindBox: true,
     shopNum: { $gt: 0 },
-    _id: { $nin: excludeProductIds }
+    _id: { $nin: excludeProductIds },
+    ...(isLocalMode ? {} : { shopStatus: 1 })
   }
 
-  const candidates = await Product.find({
-    ...baseFilter,
-    shopActualValue: { $gte: min, $lte: max }
-  }).limit(10)
+  let candidates
+  if (isLocalMode) {
+    candidates = await Product.find(baseFilter).limit(20)
+  } else {
+    const min = randomPrice * 0.5
+    const max = randomPrice * 1.5
+    candidates = await Product.find({
+      ...baseFilter,
+      shopActualValue: { $gte: min, $lte: max }
+    }).limit(10)
+  }
 
   if (candidates.length === 0) return null
 
@@ -86,32 +98,23 @@ async function generateUserBlindBoxes(userId, date) {
   }).select('productId')
   const orderingProductIds = activeOrders.map(o => o.productId)
 
-  const excludeProductIds = [...ownProductIds, ...orderingProductIds]
+  const isLocalMode = process.env.BLIND_BOX_IGNORE_LIMIT === 'true'
+  const excludeProductIds = isLocalMode ? [...ownProductIds] : [...ownProductIds, ...orderingProductIds]
   const MAX_RETRIES = 3
 
   const boxes = []
   for (let i = 0; i < 4; i++) {
     let product = null
+    let randomPrice = PRICE_POOL[Math.floor(Math.random() * PRICE_POOL.length)]
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      const randomPrice = PRICE_POOL[Math.floor(Math.random() * PRICE_POOL.length)]
-
       product = await selectProductByPrice(randomPrice, excludeProductIds)
       if (product) break
+      randomPrice = PRICE_POOL[Math.floor(Math.random() * PRICE_POOL.length)]
     }
 
     if (!product) {
       throw new Error('盲盒商品种类不足，无法生成足够的盲盒')
-    }
-
-    const updated = await Product.findByIdAndUpdate(
-      product._id,
-      { $inc: { shopNum: -1 } },
-      { new: true }
-    )
-    if (!updated || updated.shopNum < 0) {
-      i--
-      continue
     }
 
     excludeProductIds.push(product._id)
@@ -167,8 +170,20 @@ async function restorePreviousBlindBoxes() {
   const records = await BlindBoxRecord.find({ date: yesterdayStr })
   for (const record of records) {
     for (const box of record.boxes) {
-      if (box.status === 0) {
-        await Product.findByIdAndUpdate(box.productId, { $inc: { shopNum: 1 } })
+      if (box.status === 1 && box.orderId) {
+        const order = await OrderModel.findById(box.orderId)
+        if (order && order.status === 0) {
+          order.status = 4
+          order.cancelReason = '盲盒订单超时未支付，系统自动取消'
+          order.cancelTime = new Date()
+          await order.save()
+          await Product.findByIdAndUpdate(box.productId, { $inc: { shopNum: 1 } })
+          await Product.findOneAndUpdate(
+            { _id: box.productId, shopNum: { $gt: 0 }, shopStatus: 2 },
+            { shopStatus: 1 }
+          )
+          console.log(`盲盒订单超时自动取消: ${order._id}，已还原库存`)
+        }
       }
     }
   }

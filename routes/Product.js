@@ -83,23 +83,28 @@ router.post('/create',
   try {
     const currentUserId = req.user._id
 
-    const imageUrls = req.files ? req.files.map(file => `/uploads/${file.filename}`) : []
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ code: 400, msg: '请上传商品图片' })
+    }
+
+    const imageUrls = req.files.map(file => `/uploads/${file.filename}`)
 
     const shopType = req.body.shopType ? JSON.parse(req.body.shopType) : []
     const publishAddress = req.body.publishAddress ? JSON.parse(req.body.publishAddress) : {}
 
-    // 文字审核
     const textHits = []
     const nameHits = scanText(req.body.shopName)
     const msgHits = scanText(req.body.shopMsg)
     if (nameHits.length > 0) textHits.push(...nameHits)
     if (msgHits.length > 0) textHits.push(...msgHits)
 
-    const hasTextViolation = textHits.length > 0
-    const hasImages = imageUrls.length > 0
+    const textPassed = textHits.length === 0
 
-    // 无图片且文字无违规 → 直接上架；否则先待审核
-    const initialStatus = (hasImages || hasTextViolation) ? 0 : 1
+    const { moderateImagesAsync } = require('../middlewares/imageModeration')
+    const imageResult = await moderateImagesAsync(req.files)
+    const imagePassed = imageResult.passed
+
+    const autoApproved = textPassed && imagePassed
 
     const productData = {
       shopName: req.body.shopName,
@@ -112,71 +117,34 @@ router.post('/create',
       publishAddress: publishAddress,
       shopImg: imageUrls,
       userId: currentUserId,
-      shopStatus: initialStatus
+      shopStatus: autoApproved ? 1 : 0
     }
 
     const data = await ProductModel.create(productData)
 
-    // 文字违规 → 创建文字审核记录
-    if (hasTextViolation) {
+    if (!autoApproved) {
+      const violationTypes = []
+      if (!textPassed) violationTypes.push('text')
+      if (!imagePassed) violationTypes.push('image')
+
       await ReviewQueueModel.create({
         targetType: 'product',
         targetId: data._id,
         content: `${req.body.shopName} - ${(req.body.shopMsg || '').substring(0, 100)}`,
-        images: [],
-        violationType: 'text',
-        reason: `文字含敏感词: ${[...new Set(textHits)].join(', ')}`,
-        hitWords: [...new Set(textHits)],
+        images: imageUrls,
+        violationType: violationTypes.length === 2 ? 'both' : violationTypes[0],
+        reason: [
+          !textPassed ? `文字含敏感词: ${[...new Set(textHits)].join(', ')}` : '',
+          !imagePassed ? `图片疑似违规: ${imageResult.reason || 'NSFW检测未通过'}` : ''
+        ].filter(Boolean).join('；'),
+        hitWords: [...new Set(textHits), ...(imageResult.details || [])],
         status: 'pending',
         submittedBy: currentUserId
       })
+      console.log(`商品 ${data._id} 审核未通过，已提交审核队列`)
     }
 
-    // 有图片 → 异步 NSFW 检测
-    if (hasImages) {
-      setImmediate(async () => {
-        try {
-          const { moderateImagesAsync } = require('../middlewares/imageModeration')
-          const result = await moderateImagesAsync(req.files)
-
-          if (result.passed) {
-            // 图片干净 → 如果没有文字违规就上架，否则保持待审
-            const status = hasTextViolation ? 0 : 1
-            await ProductModel.findByIdAndUpdate(data._id, { shopStatus: status })
-            if (!hasTextViolation) {
-              console.log(`商品 ${data._id} 图片检测通过，已上架`)
-            }
-          } else {
-            // 图片有违规 → 创建图片审核记录
-            await ProductModel.findByIdAndUpdate(data._id, { shopStatus: 0 })
-            await ReviewQueueModel.create({
-              targetType: 'product',
-              targetId: data._id,
-              content: `${req.body.shopName} - ${(req.body.shopMsg || '').substring(0, 100)}`,
-              images: imageUrls,
-              violationType: 'image',
-              reason: `图片疑似违规: ${result.reason || 'NSFW检测未通过'}`,
-              hitWords: result.details || [],
-              status: 'pending',
-              submittedBy: currentUserId
-            })
-            console.log(`商品 ${data._id} 图片疑似违规，已提交审核`)
-          }
-        } catch (e) {
-          console.error('后台图片审核失败:', e)
-          await ProductModel.findByIdAndUpdate(data._id, { shopStatus: 0 })
-        }
-      })
-    }
-
-    let msg = '发布成功'
-    if (hasTextViolation && hasImages) {
-      msg = '发布成功，文字含敏感词且图片待审核'
-    } else if (hasTextViolation) {
-      msg = '发布成功，文字含敏感词待审核'
-    }
-
-    res.send({ code: 200, msg })
+    res.send({ code: 200, msg: autoApproved ? '发布成功' : '发布成功，等待管理员审核' })
     cache.del('product:list:*')
   } catch (err) {
     console.log(err)
@@ -368,34 +336,39 @@ router.post('/updatePro', checkTokenMiddleware, upload.array('shopImg', 6), asyn
       return res.status(404).json({ code: 404, msg: '商品不存在' })
     }
 
-    // 如果上传了新图片，异步 NSFW 检测
+    // 如果上传了新图片，同步检测
     if (newImages) {
-      setImmediate(async () => {
-        try {
-          const { moderateImagesAsync } = require('../middlewares/imageModeration')
-          const result = await moderateImagesAsync(req.files)
+      const textHits = []
+      if (updateData.shopName) textHits.push(...scanText(updateData.shopName))
+      if (updateData.shopMsg) textHits.push(...scanText(updateData.shopMsg))
+      const textPassed = textHits.length === 0
 
-          if (result.passed) {
-            console.log(`商品 ${_id} 更新图片检测通过`)
-          } else {
-            await ProductModel.findByIdAndUpdate(_id, { shopStatus: 0 })
-            await ReviewQueueModel.create({
-              targetType: 'product',
-              targetId: _id,
-              content: `${updateData.shopName || updatedProduct.shopName} - ${(updateData.shopMsg || updatedProduct.shopMsg || '').substring(0, 100)}`,
-              images: updateData.shopImg || [],
-              violationType: 'image',
-              reason: `图片疑似违规: ${result.reason || 'NSFW检测未通过'}`,
-              hitWords: result.details || [],
-              status: 'pending',
-              submittedBy: req.user._id
-            })
-            console.log(`商品 ${_id} 更新图片疑似违规，已提交审核`)
-          }
-        } catch (e) {
-          console.error('后台图片审核失败:', e)
-        }
-      })
+      const { moderateImagesAsync } = require('../middlewares/imageModeration')
+      const imageResult = await moderateImagesAsync(req.files)
+      const imagePassed = imageResult.passed
+
+      if (!textPassed || !imagePassed) {
+        const violationTypes = []
+        if (!textPassed) violationTypes.push('text')
+        if (!imagePassed) violationTypes.push('image')
+
+        await ProductModel.findByIdAndUpdate(_id, { shopStatus: 0 })
+        await ReviewQueueModel.create({
+          targetType: 'product',
+          targetId: _id,
+          content: `${updateData.shopName || updatedProduct.shopName} - ${(updateData.shopMsg || updatedProduct.shopMsg || '').substring(0, 100)}`,
+          images: updateData.shopImg || [],
+          violationType: violationTypes.length === 2 ? 'both' : violationTypes[0],
+          reason: [
+            !textPassed ? `文字含敏感词: ${[...new Set(textHits)].join(', ')}` : '',
+            !imagePassed ? `图片疑似违规: ${imageResult.reason || 'NSFW检测未通过'}` : ''
+          ].filter(Boolean).join('；'),
+          hitWords: [...new Set(textHits), ...(imageResult.details || [])],
+          status: 'pending',
+          submittedBy: req.user._id
+        })
+        console.log(`商品 ${_id} 更新审核未通过，已提交审核队列`)
+      }
     }
 
     res.json({ code: 200, msg: '更新成功' })

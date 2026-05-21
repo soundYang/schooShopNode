@@ -31,6 +31,7 @@ const LogRouter = require('./routes/Log')
 const logService = require('./ToolFunction/logService')
 const HealthRouter = require('./routes/Health')
 require('./jobs/orderTimeout')
+require('./jobs/dailyBlindBox')
 // const PayRouter = require('./routes/Pay')
 // const PayWebhookRouter = require('./routes/PayWebhook')
 

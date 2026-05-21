@@ -1,5 +1,3 @@
-const ReviewQueueModel = require('../model/ReviewQueueModel')
-
 const sensitiveWords = [
   '暴力', '赌博', '毒品', '枪支', '弹药', '爆炸', '杀人', '诈骗',
   '色情', '裸聊', '一夜情', '约炮', '迷药', '窃听', '定位器',
@@ -8,7 +6,7 @@ const sensitiveWords = [
   '反动', '邪教', '恐怖',
   '微信号', 'qq号', 'QQ号', '微信',
   '兼职刷单', '刷信誉', '刷单',
-  '赌博', '赌场', '时时彩',
+  '赌场', '时时彩',
   '违禁品', '管制刀具',
   '假钞', '假币', '伪造',
   '黑客', '破解', '外挂'
@@ -104,12 +102,4 @@ function contentModeration(options = {}) {
   }
 }
 
-async function createReviewQueueEntry(data) {
-  try {
-    await ReviewQueueModel.create(data)
-  } catch (err) {
-    console.error('创建审核记录失败:', err)
-  }
-}
-
-module.exports = { contentModeration, createReviewQueueEntry, scanText }
+module.exports = { contentModeration, scanText }

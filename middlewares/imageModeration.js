@@ -90,4 +90,25 @@ function imageModeration(options = {}) {
   }
 }
 
-module.exports = { imageModeration }
+async function moderateImagesAsync(files) {
+  for (const file of files) {
+    try {
+      const predictions = await classifyImage(file.path)
+      const nsfwItems = predictions.filter(p =>
+        NSFW_CATEGORIES.includes(p.className) && p.probability > 0.5
+      )
+      if (nsfwItems.length > 0) {
+        return {
+          passed: false,
+          reason: nsfwItems.map(p => `${p.className}:${(p.probability * 100).toFixed(1)}%`).join(', '),
+          details: nsfwItems.map(p => p.className)
+        }
+      }
+    } catch (err) {
+      return { passed: false, reason: err.message, details: [] }
+    }
+  }
+  return { passed: true, details: [] }
+}
+
+module.exports = { imageModeration, moderateImagesAsync }

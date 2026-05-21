@@ -1,3 +1,13 @@
+/**
+ * 审核机制
+ * 自动审核商品图片和名称
+ * 审核成功后，商品状态变为上架状态
+ * 如果疑似违规商品，再交给人工审核
+ * 人工审核通过后，商品状态变为上架状态
+ * 人工审核拒绝后，商品状态变为下架状态
+ * 系统会自动发送通知给用户，告知商品已被下架
+ * 自动审核如果失败，会自动将商品状态变为下架状态
+ */
 const express = require('express')
 const mongoose = require('mongoose')
 const bcrypt = require('bcrypt')
@@ -936,6 +946,10 @@ router.put('/review-queue/:id/approve', async (req, res) => {
     entry.reviewedBy = req.admin._id
     entry.reviewedAt = new Date()
     await entry.save()
+
+    if (entry.targetType === 'product') {
+      await ProductModel.findByIdAndUpdate(entry.targetId, { shopStatus: 1 })
+    }
 
     logService.admin(req.admin._id, req.admin.username, '审核通过', `${entry.targetType === 'product' ? '商品' : '评价'}审核通过, ID: ${entry.targetId}`, req.ip)
 

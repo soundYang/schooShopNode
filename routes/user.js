@@ -1,5 +1,6 @@
 const express = require('express')
 const UserModel = require('../model/UserModel')
+const ReviewQueueModel = require('../model/ReviewQueueModel')
 const router = express.Router()
 const md5 = require('md5')
 const { secret } = require('../config/index')
@@ -155,7 +156,6 @@ router.post('/login', async (req,res) => {
 router.post('/updateUser', checkTokenMiddleware, contentModeration({ checkFields: ['UserName'] }), async (req, res) => {
   const { oldPassWord, ...fieldsToUpdate } = req.body
 
-  // 如果修改密码，必须验证旧密码
   if (fieldsToUpdate.PassWord) {
     if (!oldPassWord) {
       return res.json({ code: 400, msg: '修改密码需提供旧密码' })
@@ -177,6 +177,38 @@ router.post('/updateUser', checkTokenMiddleware, contentModeration({ checkFields
   const _id = req.user._id
   try {
     if (fieldsToUpdate.PassWord) fieldsToUpdate.PassWord = md5(fieldsToUpdate.PassWord)
+
+    if (fieldsToUpdate.Avatar && fieldsToUpdate.Avatar.startsWith('data:image')) {
+      const fs = require('fs')
+      const path = require('path')
+      const os = require('os')
+      const base64Data = fieldsToUpdate.Avatar.replace(/^data:image\/\w+;base64,/, '')
+      const buf = Buffer.from(base64Data, 'base64')
+      const tmpPath = path.join(os.tmpdir(), `avatar_${Date.now()}.png`)
+      fs.writeFileSync(tmpPath, buf)
+
+      const files = [{ path: tmpPath, filename: 'avatar', originalname: 'avatar' }]
+      const { moderateImagesAsync } = require('../middlewares/imageModeration')
+      const result = await moderateImagesAsync(files)
+      try { fs.unlinkSync(tmpPath) } catch {}
+
+      if (!result.passed) {
+        await ReviewQueueModel.create({
+          targetType: 'review',
+          targetId: _id,
+          content: '用户头像审核',
+          images: [fieldsToUpdate.Avatar.substring(0, 200)],
+          violationType: 'image',
+          reason: `头像图片疑似违规: ${result.reason || 'NSFW检测未通过'}`,
+          hitWords: result.details || [],
+          status: 'pending',
+          submittedBy: _id
+        })
+        delete fieldsToUpdate.Avatar
+        res.send({ code: 200, msg: '头像审核未通过，已重置为默认头像，管理员正在审核' })
+        return
+      }
+    }
 
     const data = await UserModel.findByIdAndUpdate(_id, fieldsToUpdate)
     if (!data) {
