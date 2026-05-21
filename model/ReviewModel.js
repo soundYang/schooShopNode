@@ -36,6 +36,11 @@ const ReviewSchema = new mongoose.Schema({
   time:{
     type: Date,
     default: Date.now
+  },
+  status: {
+    type: String,
+    enum: ['approved', 'pending', 'rejected'],
+    default: 'approved'
   }
 })
 

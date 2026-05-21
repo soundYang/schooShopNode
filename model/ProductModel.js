@@ -60,6 +60,10 @@ const ProductSchema = new mongoose.Schema({
  viewCount: {
   type: Number,
   default: 0   // 浏览次数
+ },
+ violationCount: {
+  type: Number,
+  default: 0   // 违规次数，>=3 时自动删除
  }
 })
 

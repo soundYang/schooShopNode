@@ -6,12 +6,14 @@ const ProductModel = require('../model/ProductModel')
 const UserModel = require('../model/UserModel')
 const NotificationModel = require('../model/NotificationModel')
 const checkTokenMiddleware = require('../middlewares/checkTokenMiddleware')
-const { contentModeration } = require('../middlewares/contentModeration')
+const { scanText } = require('../middlewares/contentModeration')
+const { moderateImagesAsync } = require('../middlewares/imageModeration')
+const path = require('path')
 
 router.use(checkTokenMiddleware)
 
 // 添加评论
-router.post('/add', contentModeration({ checkFields: ['content'] }), async (req, res) => {
+router.post('/add', async (req, res) => {
   try {
     const { productId, sellerId, orderId, content, proPhoto, avatar } = req.body
     const userId = req.user._id
@@ -42,8 +44,8 @@ router.post('/add', contentModeration({ checkFields: ['content'] }), async (req,
       return res.status(404).json({ code: 404, msg: '卖家不存在' })
     }
 
-    // 创建评论
-    const review = await ReviewModel.create({
+    // 创建评论（先统一设为 pending，后续 AI 审核通过再改为 approved）
+    const reviewData = {
       userName,
       userId,
       sellerId,
@@ -51,26 +53,67 @@ router.post('/add', contentModeration({ checkFields: ['content'] }), async (req,
       orderId,
       content,
       proPhoto: proPhoto || '',
-      Avatar: avatar || ''
-    })
+      Avatar: avatar || '',
+      status: 'pending'
+    }
+    const review = await ReviewModel.create(reviewData)
 
-    // 如果评论包含图片，创建审核队列记录
-    if (review && proPhoto) {
-      setImmediate(async () => {
-        try {
-          await ReviewQueueModel.create({
-            targetType: 'review',
-            targetId: review._id,
-            content: content,
-            images: [proPhoto],
-            reason: '评价包含图片，需管理员审核',
-            status: 'pending',
-            submittedBy: userId
-          })
-        } catch (e) {
-          console.error('创建评论审核记录失败:', e)
-        }
+    // AI 审核：文字 + 图片
+    const contentHits = await scanText(content)
+    const textPassed = contentHits.length === 0
+
+    let imagePassed = true
+    let imageResult = null
+    if (proPhoto) {
+      try {
+        const mockFile = { path: path.join(__dirname, '..', proPhoto) }
+        imageResult = await moderateImagesAsync([mockFile])
+        imagePassed = imageResult.passed
+      } catch (e) {
+        console.error('评价图片审核失败:', e)
+        imagePassed = false
+        imageResult = { reason: '图片审核异常，需人工复审', details: ['审核异常'] }
+      }
+    }
+
+    const autoApproved = textPassed && imagePassed
+
+    if (autoApproved) {
+      await ReviewModel.findByIdAndUpdate(review._id, { status: 'approved' })
+    } else {
+      const violationTypes = []
+      if (!textPassed) violationTypes.push('text')
+      if (!imagePassed) violationTypes.push('image')
+
+      const existingEntry = await ReviewQueueModel.findOne({
+        targetType: 'review',
+        targetId: review._id
       })
+
+      const entryData = {
+        content: content.substring(0, 200),
+        images: proPhoto ? [proPhoto] : [],
+        violationType: violationTypes.length === 2 ? 'both' : violationTypes[0],
+        reason: [
+          !textPassed ? `文字含敏感词: ${contentHits.join(', ')}` : '',
+          !imagePassed ? `图片疑似违规: ${imageResult?.reason || '检测未通过'}` : ''
+        ].filter(Boolean).join('；'),
+        hitWords: [...new Set(contentHits), ...(imageResult?.details || [])],
+        submittedBy: userId
+      }
+
+      if (existingEntry) {
+        await ReviewQueueModel.findByIdAndUpdate(existingEntry._id, { ...entryData, status: 'pending' })
+        console.log(`评价 ${review._id} 已有待审核记录，已更新违规内容`)
+      } else {
+        await ReviewQueueModel.create({
+          ...entryData,
+          targetType: 'review',
+          targetId: review._id,
+          status: 'pending'
+        })
+        console.log(`评价 ${review._id} 审核未通过，已提交审核队列`)
+      }
     }
 
     // 通知卖家
@@ -82,7 +125,11 @@ router.post('/add', contentModeration({ checkFields: ['content'] }), async (req,
       orderId
     })
 
-    res.json({ code: 200, data: review, msg: proPhoto ? '评论成功，图片待管理员审核' : '评论成功' })
+    res.json({
+      code: 200,
+      data: review,
+      msg: autoApproved ? '评论成功' : '评论成功，等待管理员审核'
+    })
   } catch (err) {
     console.error(err)
     res.status(500).json({ code: 500, msg: '服务器错误' })
@@ -120,7 +167,7 @@ router.delete('/del', async (req, res) => {
 router.get('/list', async (req, res) => {
   try {
     const { productId, userId, sellerId, page = 1, pageSize = 10 } = req.query
-    const query = {}
+    const query = { status: 'approved' }
     if (productId) query.productId = productId
     if (userId) query.userId = userId
     if (sellerId) query.sellerId = sellerId

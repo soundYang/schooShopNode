@@ -906,7 +906,7 @@ router.get('/review-queue', async (req, res) => {
     const enriched = await Promise.all(list.map(async (item) => {
       const obj = item.toObject()
       if (item.targetType === 'product') {
-        const product = await ProductModel.findById(item.targetId).select('shopName shopPrice shopStatus')
+        const product = await ProductModel.findById(item.targetId).select('shopName shopPrice shopStatus violationCount')
         obj.targetInfo = product || null
       } else if (item.targetType === 'review') {
         const review = await ReviewModel.findById(item.targetId).select('content userName')
@@ -942,15 +942,34 @@ router.put('/review-queue/:id/approve', async (req, res) => {
       return res.status(404).json({ code: 404, msg: '审核记录不存在' })
     }
 
+    if (entry.targetType === 'product') {
+      await ProductModel.findByIdAndUpdate(entry.targetId, { shopStatus: 1, violationCount: 0 })
+      const product = await ProductModel.findById(entry.targetId).select('userId shopName')
+      if (product) {
+        await NotificationModel.create({
+          userId: product.userId,
+          type: 'review_approved',
+          title: '商品审核通过',
+          msg: `您的商品「${product.shopName}」已通过审核，已上架`
+        })
+      }
+    } else if (entry.targetType === 'review') {
+      await ReviewModel.findByIdAndUpdate(entry.targetId, { status: 'approved' })
+      const review = await ReviewModel.findById(entry.targetId).select('userId')
+      if (review) {
+        await NotificationModel.create({
+          userId: review.userId,
+          type: 'review_approved',
+          title: '评价审核通过',
+          msg: '您的评价已通过审核'
+        })
+      }
+    }
+
     entry.status = 'approved'
     entry.reviewedBy = req.admin._id
     entry.reviewedAt = new Date()
     await entry.save()
-
-    if (entry.targetType === 'product') {
-      await ProductModel.findByIdAndUpdate(entry.targetId, { shopStatus: 1 })
-    }
-
     logService.admin(req.admin._id, req.admin.username, '审核通过', `${entry.targetType === 'product' ? '商品' : '评价'}审核通过, ID: ${entry.targetId}`, req.ip)
 
     res.json({ code: 200, msg: '审核通过' })
@@ -967,18 +986,69 @@ router.put('/review-queue/:id/reject', async (req, res) => {
       return res.status(404).json({ code: 404, msg: '审核记录不存在' })
     }
 
-    entry.status = 'rejected'
-    entry.reviewedBy = req.admin._id
-    entry.reviewedAt = new Date()
-    entry.rejectReason = reason || '管理员拒绝'
-    await entry.save()
-
     // 拒绝后删除对应内容
     if (entry.targetType === 'product') {
-      await ProductModel.findByIdAndUpdate(entry.targetId, { shopStatus: 3 })
-      logService.admin(req.admin._id, req.admin.username, '审核拒绝-删除商品', `商品ID: ${entry.targetId}, 理由: ${reason}`, req.ip)
+      const product = await ProductModel.findById(entry.targetId).select('userId shopName shopStatus violationCount')
+      if (product) {
+        const newCount = (product.violationCount || 0) + 1
+
+        if (newCount >= 3) {
+          // 三次违规 → 自动删除
+          await ProductModel.findByIdAndDelete(entry.targetId)
+          await NotificationModel.create({
+            userId: product.userId,
+            type: 'review_rejected',
+            title: '商品多次违规已删除',
+            msg: `您的商品「${product.shopName}」审核未通过（第${newCount}次/共3次），已达到上限，已自动删除。原因：${reason || '内容违规'}`
+          })
+          logService.admin(req.admin._id, req.admin.username, '审核拒绝-自动删除', `商品ID: ${entry.targetId}, 违规次数已满3次, 理由: ${reason}`, req.ip)
+          // 更新审核队列状态（即使商品已被删除）
+          await ReviewQueueModel.findByIdAndUpdate(req.params.id, {
+            status: 'rejected',
+            reviewedBy: req.admin._id,
+            reviewedAt: new Date(),
+            rejectReason: reason || '管理员拒绝'
+          })
+          return res.json({ code: 200, msg: `已拒绝，该商品累计违规${newCount}次，已达上限，已自动删除` })
+        }
+
+        // 未达上限：下架 + 违规计数
+        await ProductModel.findByIdAndUpdate(entry.targetId, { shopStatus: 3, violationCount: newCount })
+        const remaining = 3 - newCount
+        await NotificationModel.create({
+          userId: product.userId,
+          type: 'review_rejected',
+          title: '商品审核未通过',
+          msg: `您的商品「${product.shopName}」审核未通过（第${newCount}次/共3次），再违规${remaining}次将自动删除。原因：${reason || '内容违规'}`
+        })
+        logService.admin(req.admin._id, req.admin.username, '审核拒绝', `商品ID: ${entry.targetId}, 违规次数: ${newCount}/3, 理由: ${reason}`, req.ip)
+      }
+
+      // product 可能已被其他操作删除，仍需更新审核队列状态
+      await ReviewQueueModel.findByIdAndUpdate(req.params.id, {
+        status: 'rejected',
+        reviewedBy: req.admin._id,
+        reviewedAt: new Date(),
+        rejectReason: reason || '管理员拒绝'
+      })
+      return res.json({ code: 200, msg: '已拒绝，商品已下架' })
     } else if (entry.targetType === 'review') {
+      const review = await ReviewModel.findById(entry.targetId).select('userId')
+      if (review) {
+        await NotificationModel.create({
+          userId: review.userId,
+          type: 'review_rejected',
+          title: '评价审核未通过',
+          msg: `您的评价审核未通过，原因：${reason || '内容违规'}，已删除`
+        })
+      }
       await ReviewModel.findByIdAndDelete(entry.targetId)
+      await ReviewQueueModel.findByIdAndUpdate(req.params.id, {
+        status: 'rejected',
+        reviewedBy: req.admin._id,
+        reviewedAt: new Date(),
+        rejectReason: reason || '管理员拒绝'
+      })
       logService.admin(req.admin._id, req.admin.username, '审核拒绝-删除评价', `评价ID: ${entry.targetId}, 理由: ${reason}`, req.ip)
     }
 

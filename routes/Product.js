@@ -6,6 +6,7 @@ const express = require('express')
 const multer = require('multer')  
 const ProductModel = require('../model/ProductModel.js')
 const ReviewQueueModel = require('../model/ReviewQueueModel')
+const NotificationModel = require('../model/NotificationModel')
 const router = express.Router()
 const checkTokenMiddleware = require('../middlewares/checkTokenMiddleware.js')
 const { scanText } = require('../middlewares/contentModeration')
@@ -93,8 +94,8 @@ router.post('/create',
     const publishAddress = req.body.publishAddress ? JSON.parse(req.body.publishAddress) : {}
 
     const textHits = []
-    const nameHits = scanText(req.body.shopName)
-    const msgHits = scanText(req.body.shopMsg)
+    const nameHits = await scanText(req.body.shopName)
+    const msgHits = await scanText(req.body.shopMsg)
     if (nameHits.length > 0) textHits.push(...nameHits)
     if (msgHits.length > 0) textHits.push(...msgHits)
 
@@ -127,9 +128,12 @@ router.post('/create',
       if (!textPassed) violationTypes.push('text')
       if (!imagePassed) violationTypes.push('image')
 
-      await ReviewQueueModel.create({
+      const existingEntry = await ReviewQueueModel.findOne({
         targetType: 'product',
-        targetId: data._id,
+        targetId: data._id
+      })
+
+      const entryData = {
         content: `${req.body.shopName} - ${(req.body.shopMsg || '').substring(0, 100)}`,
         images: imageUrls,
         violationType: violationTypes.length === 2 ? 'both' : violationTypes[0],
@@ -138,9 +142,19 @@ router.post('/create',
           !imagePassed ? `图片疑似违规: ${imageResult.reason || 'NSFW检测未通过'}` : ''
         ].filter(Boolean).join('；'),
         hitWords: [...new Set(textHits), ...(imageResult.details || [])],
-        status: 'pending',
         submittedBy: currentUserId
-      })
+      }
+
+      if (existingEntry) {
+        await ReviewQueueModel.findByIdAndUpdate(existingEntry._id, { ...entryData, status: 'pending' })
+      } else {
+        await ReviewQueueModel.create({
+          ...entryData,
+          targetType: 'product',
+          targetId: data._id,
+          status: 'pending'
+        })
+      }
       console.log(`商品 ${data._id} 审核未通过，已提交审核队列`)
     }
 
@@ -232,16 +246,22 @@ router.get('/getUserProducts',checkTokenMiddleware, async (req, res) => {
     }
     const { page = 1, pageSize = 10 } = req.query
 
+    // 查看他人时只显示已上架的商品，查看自己的全部显示
+    const query = { userId }
+    if (req.query.id) {
+      query.shopStatus = 1
+    }
+
     const skip = (parseInt(page) - 1) * parseInt(pageSize)
     const limit = parseInt(pageSize)
 
     const [data, total] = await Promise.all([
-      ProductModel.find({userId})
+      ProductModel.find(query)
         .skip(skip)
         .limit(limit)
         .sort({ createTime: -1 })
         .lean(),
-      ProductModel.countDocuments({userId})  // 获取总记录数
+      ProductModel.countDocuments(query)
     ])
     fixShopType(data)
     res.json({
@@ -299,7 +319,7 @@ router.delete('/delPro', checkTokenMiddleware, async (req, res) => {
   }
 })
 
-// 更新商品信息
+// 更新商品信息（始终走审核流程，三次违规自动删除）
 router.post('/updatePro', checkTokenMiddleware, upload.array('shopImg', 6), async (req, res) => {
   try {
     const { _id, ...updateData } = req.body
@@ -317,59 +337,81 @@ router.post('/updatePro', checkTokenMiddleware, upload.array('shopImg', 6), asyn
       try { updateData.publishAddress = JSON.parse(updateData.publishAddress) } catch (e) {}
     }
 
-    // 如果有上传新图片，替换商品图片
+    // 查询现有商品（用于违规计数）
+    const existingProduct = await ProductModel.findById(_id)
+    if (!existingProduct) {
+      return res.status(404).json({ code: 404, msg: '商品不存在' })
+    }
+
+    // 处理新上传图片
     const newImages = req.files && req.files.length > 0
     if (newImages) {
       updateData.shopImg = req.files.map(file => `/uploads/${file.filename}`)
     }
 
-    const updatedProduct = await ProductModel.findByIdAndUpdate(
-      _id,
-      updateData,
-      {
-        returnDocument: 'after',
-        runValidators: true
-      }
-    )
+    // ===== 始终执行审核 =====
+    const textName = updateData.shopName || existingProduct.shopName
+    const textMsg = updateData.shopMsg || existingProduct.shopMsg
+    const textHits = []
+    textHits.push(...await scanText(textName))
+    textHits.push(...await scanText(textMsg))
+    const textPassed = textHits.length === 0
 
-    if (!updatedProduct) {
-      return res.status(404).json({ code: 404, msg: '商品不存在' })
-    }
-
-    // 如果上传了新图片，同步检测
+    let imagePassed = true
+    let imageResult = { passed: true, details: [], reason: '' }
     if (newImages) {
-      const textHits = []
-      if (updateData.shopName) textHits.push(...scanText(updateData.shopName))
-      if (updateData.shopMsg) textHits.push(...scanText(updateData.shopMsg))
-      const textPassed = textHits.length === 0
-
       const { moderateImagesAsync } = require('../middlewares/imageModeration')
-      const imageResult = await moderateImagesAsync(req.files)
-      const imagePassed = imageResult.passed
+      imageResult = await moderateImagesAsync(req.files)
+      imagePassed = imageResult.passed
+    }
+    const allPassed = textPassed && imagePassed
 
-      if (!textPassed || !imagePassed) {
-        const violationTypes = []
-        if (!textPassed) violationTypes.push('text')
-        if (!imagePassed) violationTypes.push('image')
+    if (!allPassed) {
+      // 提交审核队列（同一个商品已有待审核记录则更新，不重复创建）
+      updateData.shopStatus = 0
+      await ProductModel.findByIdAndUpdate(_id, updateData, { returnDocument: 'after', runValidators: true })
 
-        await ProductModel.findByIdAndUpdate(_id, { shopStatus: 0 })
+      const violationTypes = []
+      if (!textPassed) violationTypes.push('text')
+      if (!imagePassed) violationTypes.push('image')
+
+      const existingEntry = await ReviewQueueModel.findOne({
+        targetType: 'product',
+        targetId: _id
+      })
+
+      const entryData = {
+        content: `${textName} - ${(textMsg || '').substring(0, 100)}`,
+        images: updateData.shopImg || existingProduct.shopImg || [],
+        violationType: violationTypes.length === 2 ? 'both' : violationTypes[0],
+        reason: [
+          !textPassed ? `文字含敏感词: ${[...new Set(textHits)].join(', ')}` : '',
+          !imagePassed ? `图片疑似违规: ${imageResult.reason || 'NSFW检测未通过'}` : ''
+        ].filter(Boolean).join('；'),
+        hitWords: [...new Set(textHits), ...(imageResult.details || [])],
+        submittedBy: req.user._id
+      }
+
+      if (existingEntry) {
+        await ReviewQueueModel.findByIdAndUpdate(existingEntry._id, { ...entryData, status: 'pending' })
+        console.log(`商品 ${_id} 已有待审核记录，已更新违规内容`)
+      } else {
         await ReviewQueueModel.create({
+          ...entryData,
           targetType: 'product',
           targetId: _id,
-          content: `${updateData.shopName || updatedProduct.shopName} - ${(updateData.shopMsg || updatedProduct.shopMsg || '').substring(0, 100)}`,
-          images: updateData.shopImg || [],
-          violationType: violationTypes.length === 2 ? 'both' : violationTypes[0],
-          reason: [
-            !textPassed ? `文字含敏感词: ${[...new Set(textHits)].join(', ')}` : '',
-            !imagePassed ? `图片疑似违规: ${imageResult.reason || 'NSFW检测未通过'}` : ''
-          ].filter(Boolean).join('；'),
-          hitWords: [...new Set(textHits), ...(imageResult.details || [])],
-          status: 'pending',
-          submittedBy: req.user._id
+          status: 'pending'
         })
-        console.log(`商品 ${_id} 更新审核未通过，已提交审核队列`)
+        console.log(`商品 ${_id} 编辑内容触发审核，已提交审核队列`)
       }
+
+      return res.json({ code: 200, msg: '修改已提交，等待管理员审核' })
     }
+
+    // ===== 审核全部通过 =====
+    updateData.shopStatus = 1
+    // 违规计数不重置，仅在管理员后台审核通过时重置
+    await ProductModel.findByIdAndUpdate(_id, updateData, { returnDocument: 'after', runValidators: true })
 
     res.json({ code: 200, msg: '更新成功' })
     cache.del('product:list:*')

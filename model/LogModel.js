@@ -1,4 +1,4 @@
-﻿const mongoose = require('mongoose')
+const mongoose = require('mongoose')
 
 const LogSchema = new mongoose.Schema({
   type: {
@@ -15,7 +15,7 @@ const LogSchema = new mongoose.Schema({
   },
   userId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    ref: 'user',
     default: null,
     index: true
   },

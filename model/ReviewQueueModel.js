@@ -1,4 +1,4 @@
-﻿const mongoose = require('mongoose')
+const mongoose = require('mongoose')
 
 const ReviewQueueSchema = new mongoose.Schema({
   targetType: {
@@ -19,7 +19,7 @@ const ReviewQueueSchema = new mongoose.Schema({
   }],
   violationType: {
     type: String,
-    enum: ['image', 'text', 'other'],
+    enum: ['image', 'text', 'both', 'other'],
     default: 'other'
   },
   reason: {
