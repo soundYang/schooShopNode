@@ -58,13 +58,27 @@ router.post('/add', async (req, res) => {
     }
     const review = await ReviewModel.create(reviewData)
 
-    // AI 审核：文字 + 图片
-    const contentHits = await scanText(content)
-    const textPassed = contentHits.length === 0
+    // 文字审核：Trie/Baidu命中直接打回，Baidu异常进审核队列
+    let contentHits = []
+    try {
+      contentHits = await scanText(content)
+    } catch (e) {
+      console.error('评价文字审核异常:', e.message)
+      contentHits = ['百度审核异常，需人工复审']
+    }
+
+    const textBaiduError = contentHits.includes('百度审核异常，需人工复审')
+    const textRealHit = contentHits.length > 0 && !textBaiduError
+
+    if (textRealHit) {
+      await ReviewModel.findByIdAndDelete(review._id)
+      return res.json({ code: 400, msg: '评论不合规' })
+    }
 
     let imagePassed = true
     let imageResult = null
-    if (proPhoto) {
+    const hasLocalImage = proPhoto && typeof proPhoto === 'string' && !proPhoto.startsWith('http')
+    if (hasLocalImage) {
       try {
         const mockFile = { path: path.join(__dirname, '..', proPhoto) }
         imageResult = await moderateImagesAsync([mockFile])
@@ -76,47 +90,53 @@ router.post('/add', async (req, res) => {
       }
     }
 
-    const autoApproved = textPassed && imagePassed
-
-    if (autoApproved) {
+    if (imagePassed && !textBaiduError) {
       await ReviewModel.findByIdAndUpdate(review._id, { status: 'approved' })
-    } else {
-      const violationTypes = []
-      if (!textPassed) violationTypes.push('text')
-      if (!imagePassed) violationTypes.push('image')
-
-      const existingEntry = await ReviewQueueModel.findOne({
-        targetType: 'review',
-        targetId: review._id
+      await NotificationModel.create({
+        userId: sellerId,
+        type: 'new_review',
+        title: '收到新评价',
+        msg: `${userName} 评价了您的商品：${content}`,
+        orderId
       })
-
-      const entryData = {
-        content: content.substring(0, 200),
-        images: proPhoto ? [proPhoto] : [],
-        violationType: violationTypes.length === 2 ? 'both' : violationTypes[0],
-        reason: [
-          !textPassed ? `文字含敏感词: ${contentHits.join(', ')}` : '',
-          !imagePassed ? `图片疑似违规: ${imageResult?.reason || '检测未通过'}` : ''
-        ].filter(Boolean).join('；'),
-        hitWords: [...new Set(contentHits), ...(imageResult?.details || [])],
-        submittedBy: userId
-      }
-
-      if (existingEntry) {
-        await ReviewQueueModel.findByIdAndUpdate(existingEntry._id, { ...entryData, status: 'pending' })
-        console.log(`评价 ${review._id} 已有待审核记录，已更新违规内容`)
-      } else {
-        await ReviewQueueModel.create({
-          ...entryData,
-          targetType: 'review',
-          targetId: review._id,
-          status: 'pending'
-        })
-        console.log(`评价 ${review._id} 审核未通过，已提交审核队列`)
-      }
+      return res.json({ code: 200, data: review, msg: '评论成功' })
     }
 
-    // 通知卖家
+    // 文字百度异常 或 图片违规 → 进审核队列
+    const existingEntry = await ReviewQueueModel.findOne({
+      targetType: 'review',
+      targetId: review._id
+    })
+
+    const violationTypes = []
+    if (textBaiduError) violationTypes.push('text')
+    if (!imagePassed) violationTypes.push('image')
+
+    const entryData = {
+      content: content.substring(0, 200),
+      images: proPhoto ? [proPhoto] : [],
+      violationType: violationTypes.length === 2 ? 'both' : violationTypes[0],
+      reason: [
+        textBaiduError ? '文字审核异常，需人工复审' : '',
+        !imagePassed ? `图片疑似违规: ${imageResult?.reason || '检测未通过'}` : ''
+      ].filter(Boolean).join('；'),
+      hitWords: [...(textBaiduError ? ['审核异常'] : []), ...(imageResult?.details || [])],
+      submittedBy: userId
+    }
+
+    if (existingEntry) {
+      await ReviewQueueModel.findByIdAndUpdate(existingEntry._id, { ...entryData, status: 'pending' })
+      console.log(`评价 ${review._id} 已有待审核记录，已更新违规内容`)
+    } else {
+      await ReviewQueueModel.create({
+        ...entryData,
+        targetType: 'review',
+        targetId: review._id,
+        status: 'pending'
+      })
+      console.log(`评价 ${review._id} 审核异常，已提交审核队列`)
+    }
+
     await NotificationModel.create({
       userId: sellerId,
       type: 'new_review',
@@ -125,11 +145,7 @@ router.post('/add', async (req, res) => {
       orderId
     })
 
-    res.json({
-      code: 200,
-      data: review,
-      msg: autoApproved ? '评论成功' : '评论成功，等待管理员审核'
-    })
+    res.json({ code: 200, data: review, msg: '评论成功，等待管理员审核' })
   } catch (err) {
     console.error(err)
     res.status(500).json({ code: 500, msg: '服务器错误' })

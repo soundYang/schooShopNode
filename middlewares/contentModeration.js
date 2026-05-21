@@ -52,29 +52,43 @@ try {
 function scanWithTrie(text) {
   if (!text) return []
 
-  const filtered = trie.filter({
-    text,
-    ignoreCase: true,
-    ignoreSpaces: true
-  })
-
-  if (filtered === text) return []
-
-  const lower = text.toLowerCase()
-  const hits = []
-
-  const phones = lower.match(phoneReg)
-  if (phones) {
-    for (const p of phones) {
-      hits.push('手机号:' + p)
-    }
+  let normalizedText = text
+  if (trie.ignoreSpaces) {
+    normalizedText = normalizedText.replace(/\s+/g, '')
+  }
+  if (trie.ignoreCase) {
+    normalizedText = normalizedText.normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
   }
 
+  const chars = Array.from(normalizedText)
+  let found = false
+  for (let i = 0; i < chars.length; i++) {
+    let node = trie.root
+    let j = i
+    while (j < chars.length && node.children[chars[j]]) {
+      node = node.children[chars[j]]
+      if (node.isEndOfWord) {
+        found = true
+        break
+      }
+      j++
+    }
+    if (found) break
+  }
+
+  if (!found) return []
+
+  const hits = []
+  const lower = text.toLowerCase()
+  const phones = lower.match(phoneReg)
+  if (phones) {
+    for (const p of phones) hits.push('手机号:' + p)
+  }
   const urls = lower.match(urlReg)
   if (urls) {
-    for (const u of urls) {
-      hits.push('外链:' + u)
-    }
+    for (const u of urls) hits.push('外链:' + u)
   }
 
   return hits.length > 0 ? hits : ['内容包含不当信息']
