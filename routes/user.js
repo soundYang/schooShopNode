@@ -13,7 +13,7 @@ const logService = require('../ToolFunction/logService')
 const { maskPhone, maskAddressesPhone } = require('../ToolFunction/maskPhone')
 const captchaStore = require('../ToolFunction/captchaStore')
 
-const { contentModeration } = require('../middlewares/contentModeration')
+const { contentModeration, scanText } = require('../middlewares/contentModeration')
 
 const ALLOWED_REGISTER_FIELDS = ['UserName', 'PassWord', 'PhoneNumber', 'StudentId', 'Avatar']
 
@@ -153,7 +153,7 @@ router.post('/login', async (req,res) => {
 }) 
 
 // 更新用户信息（含旧密码验证）
-router.post('/updateUser', checkTokenMiddleware, contentModeration({ checkFields: ['UserName'] }), async (req, res) => {
+router.post('/updateUser', checkTokenMiddleware, async (req, res) => {
   const { oldPassWord, ...fieldsToUpdate } = req.body
 
   if (fieldsToUpdate.PassWord) {
@@ -177,6 +177,18 @@ router.post('/updateUser', checkTokenMiddleware, contentModeration({ checkFields
   const _id = req.user._id
   try {
     if (fieldsToUpdate.PassWord) fieldsToUpdate.PassWord = md5(fieldsToUpdate.PassWord)
+
+    if (fieldsToUpdate.UserName) {
+      try {
+        const nameHits = await scanText(fieldsToUpdate.UserName)
+        if (nameHits.length > 0) {
+          return res.json({ code: 400, msg: '名称不合规' })
+        }
+      } catch (e) {
+        console.error('用户名审核异常:', e.message)
+        return res.json({ code: 500, msg: '用户名审核服务异常，请稍后再试' })
+      }
+    }
 
     if (fieldsToUpdate.Avatar && fieldsToUpdate.Avatar.startsWith('data:image')) {
       const fs = require('fs')

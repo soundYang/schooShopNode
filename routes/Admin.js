@@ -964,13 +964,23 @@ router.put('/review-queue/:id/approve', async (req, res) => {
           msg: '您的评价已通过审核'
         })
       }
+    } else if (entry.targetType === 'user') {
+      const newName = entry.content.replace('新用户名: ', '')
+      await UserModel.findByIdAndUpdate(entry.targetId, { UserName: newName })
+      await NotificationModel.create({
+        userId: entry.targetId,
+        type: 'review_approved',
+        title: '用户名审核通过',
+        msg: `您的新用户名「${newName}」已通过审核`
+      })
     }
 
     entry.status = 'approved'
     entry.reviewedBy = req.admin._id
     entry.reviewedAt = new Date()
     await entry.save()
-    logService.admin(req.admin._id, req.admin.username, '审核通过', `${entry.targetType === 'product' ? '商品' : '评价'}审核通过, ID: ${entry.targetId}`, req.ip)
+    const typeLabel = entry.targetType === 'product' ? '商品' : entry.targetType === 'review' ? '评价' : '用户名'
+    logService.admin(req.admin._id, req.admin.username, '审核通过', `${typeLabel}审核通过, ID: ${entry.targetId}`, req.ip)
 
     res.json({ code: 200, msg: '审核通过' })
   } catch (err) {
@@ -1050,6 +1060,22 @@ router.put('/review-queue/:id/reject', async (req, res) => {
         rejectReason: reason || '管理员拒绝'
       })
       logService.admin(req.admin._id, req.admin.username, '审核拒绝-删除评价', `评价ID: ${entry.targetId}, 理由: ${reason}`, req.ip)
+    } else if (entry.targetType === 'user') {
+      const newName = entry.content.replace('新用户名: ', '')
+      await NotificationModel.create({
+        userId: entry.targetId,
+        type: 'review_rejected',
+        title: '用户名审核未通过',
+        msg: `您的新用户名「${newName}」审核未通过，原因：${reason || '内容违规'}，已保留原用户名`
+      })
+      await ReviewQueueModel.findByIdAndUpdate(req.params.id, {
+        status: 'rejected',
+        reviewedBy: req.admin._id,
+        reviewedAt: new Date(),
+        rejectReason: reason || '管理员拒绝'
+      })
+      logService.admin(req.admin._id, req.admin.username, '审核拒绝-用户名', `用户ID: ${entry.targetId}, 新用户名: ${newName}, 理由: ${reason}`, req.ip)
+      return res.json({ code: 200, msg: '已拒绝，用户名不变' })
     }
 
     res.json({ code: 200, msg: '已拒绝并删除对应内容' })

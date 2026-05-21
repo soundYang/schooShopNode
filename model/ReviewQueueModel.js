@@ -3,7 +3,7 @@ const mongoose = require('mongoose')
 const ReviewQueueSchema = new mongoose.Schema({
   targetType: {
     type: String,
-    enum: ['product', 'review'],
+    enum: ['product', 'review', 'user'],
     required: true
   },
   targetId: {
