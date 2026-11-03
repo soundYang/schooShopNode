@@ -81,7 +81,14 @@ router.post('/seed', async (req, res) => {
     if (existing) {
       return res.json({ code: 400, msg: '初始管理员已存在' })
     }
-    const hash = await bcrypt.hash('REDACTED_DEFAULT_PASSWORD', 10)
+    const seedPassword = process.env.SEED_ADMIN_PASSWORD
+    if (!seedPassword || seedPassword.length < 12) {
+      return res.status(503).json({
+        code: 503,
+        msg: '种子接口已禁用：请在 .env 中配置至少 12 位的 SEED_ADMIN_PASSWORD'
+      })
+    }
+    const hash = await bcrypt.hash(seedPassword, 10)
     const admin = new AdminModel({
       username: 'admin',
       password: hash,
@@ -91,7 +98,7 @@ router.post('/seed', async (req, res) => {
     await admin.save()
     // 不返回明文密码
     logService.admin(admin._id, admin.username, '创建初始管理员', '首次部署创建管理员账号', req.ip)
-    res.json({ code: 200, msg: '初始管理员创建成功，请使用 admin / REDACTED_DEFAULT_PASSWORD 登录' })
+    res.json({ code: 200, msg: '初始管理员创建成功，请使用 admin 和配置的密码登录' })
   } catch (err) {
     res.status(500).json({ code: 500, msg: '服务器错误', error: err.message })
   }
