@@ -3,6 +3,8 @@ const path = require('path')
 const { checkText } = require('./baiduModeration')
 const Trie = require('sensitive-word-filtering')
 
+const isProduction = process.env.NODE_ENV === 'production'
+
 const sensitiveWords = [
   '暴力', '赌博', '毒品', '枪支', '弹药', '爆炸', '杀人', '诈骗',
   '色情', '裸聊', '一夜情', '约炮', '迷药', '窃听', '定位器',
@@ -15,6 +17,7 @@ const sensitiveWords = [
   '违禁品', '管制刀具',
   '假钞', '假币', '伪造',
   '黑客', '破解', '外挂',
+  ...(isProduction ? [] : ['不行']),
   '傻逼', '傻B', 'sb', 'SB', '傻叉', '脑残', '弱智', '智障',
   '妈的', '他妈', '操你', '草你', '日你', '你妈', '尼玛', '你麻痹',
   '废物', '垃圾', '白痴', '蠢货', '狗日的', '王八', '龟孙',

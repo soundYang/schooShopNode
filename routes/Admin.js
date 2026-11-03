@@ -24,6 +24,7 @@ const BlindBoxRecordModel = require('../model/BlindBoxRecordModel.js')
 const NotificationModel = require('../model/NotificationModel.js')
 const checkAdminMiddleware = require('../middlewares/checkAdminMiddleware.js')
 const logService = require('../ToolFunction/logService')
+const { cache } = require('../ToolFunction/redisClient')
 const router = express.Router()
 
 // ==================== 登录 ====================
@@ -623,7 +624,9 @@ router.put('/labels', async (req, res) => {
       })
       await labels.save()
     }
-    logService.admin(req.admin._id, req.admin.username, '更新标签', `主标签: ${labels.mainLabel.items.length}个, 属性标签: ${labels.attributeLabel.items.length}个, 热门标签: ${labels.hotLabel.items.length}个`, req.ip)
+    cache.del('label:all')
+    cache.del('label:field:*')
+    logService.admin(req.admin._id, req.admin.username, '更新标签', `主标签: ${normalizeLabel(labels.mainLabel).items.length}个, 属性标签: ${normalizeLabel(labels.attributeLabel).items.length}个, 热门标签: ${normalizeLabel(labels.hotLabel).items.length}个`, req.ip)
     res.json({ code: 200, msg: '标签已更新', data: labels })
   } catch (err) {
     res.status(500).json({ code: 500, msg: '服务器错误', error: err.message })
